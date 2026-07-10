@@ -1,0 +1,150 @@
+import { z } from "zod";
+
+// Accepts both a bare domain ("chafiqjalal.com") and a full URL
+// ("https://chafiqjalal.com") — lenient on purpose, since this is a
+// display-only contact field, not something the app makes requests to.
+// An empty string is treated the same as "not set", not a validation error.
+const WEBSITE_REGEX = /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?([/?#]\S*)?$/i;
+
+const websiteSchema = z
+  .string()
+  .trim()
+  .refine((val) => val.length === 0 || WEBSITE_REGEX.test(val), {
+    message: 'Website must be a valid URL or domain, e.g. "example.com" or "https://example.com".',
+  })
+  .optional();
+
+export const profileDocSchema = z.object({
+  _id: z.literal("jalal_chafiq"),
+  personal: z.object({
+    name: z.string().min(1),
+    email: z.string(),
+    phone: z.string(),
+    location: z.string(),
+    website: websiteSchema,
+    languages: z.array(z.object({ lang: z.string(), level: z.string() })),
+  }),
+  education: z.array(
+    z.object({
+      id: z.string(),
+      degree: z.string(),
+      school: z.string(),
+      endDate: z.string(),
+      honors: z.string().optional(),
+      description: z.string().optional(),
+      descriptionFr: z.string().optional(),
+      tags: z.array(z.string()),
+    }),
+  ),
+  experience: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      company: z.string(),
+      location: z.string(),
+      startDate: z.string(),
+      endDate: z.string().nullable(),
+      bullets: z.array(
+        z.object({
+          id: z.string(),
+          text: z.string(),
+          textFr: z.string().optional(),
+          tags: z.array(z.string()),
+        }),
+      ),
+    }),
+  ),
+});
+
+// Targeted-edit request body for PATCH /api/admin/update-profile — a partial
+// view of profileDocSchema's own field shapes, plus id keys used to locate
+// the specific array element to update. Requires at least one change.
+export const updateProfileRequestSchema = z
+  .object({
+    personal: profileDocSchema.shape.personal.omit({ languages: true }).partial(),
+    education: z.array(
+      profileDocSchema.shape.education.element.omit({ tags: true }).partial().extend({ id: z.string().min(1) }),
+    ),
+    bullets: z.array(
+      z.object({
+        experienceId: z.string().min(1),
+        bulletId: z.string().min(1),
+        text: z.string().min(1),
+        // Which bullet field to write; defaults to "text" so existing callers
+        // (the un-positioned profile editor) are unaffected. A per-positioning
+        // editor viewing an "fr" positioning passes "textFr" instead — see
+        // app/edit/[positioningId]/page.tsx.
+        field: z.enum(["text", "textFr"]).optional(),
+      }),
+    ),
+  })
+  .partial()
+  .refine(
+    (body) =>
+      (body.personal && Object.keys(body.personal).length > 0) ||
+      (body.education && body.education.length > 0) ||
+      (body.bullets && body.bullets.length > 0),
+    { message: "Request must include at least one change." },
+  );
+
+export const positioningDocSchema = z.object({
+  _id: z.string().min(1),
+  roleGroup: z.string().min(1),
+  targetTitle: z.string(),
+  summary: z.string(),
+  skillsOrder: z.array(z.string()),
+  bulletSelection: z.record(z.string(), z.array(z.string())),
+  format: z.enum(["visual", "ats"]),
+  language: z.enum(["en", "fr"]),
+  draftTranslation: z.boolean().optional(),
+});
+
+// Targeted-edit request body for PATCH /api/admin/update-positioning — updates
+// one PositioningDoc by _id. Field types mirror positioningDocSchema's own
+// shapes so the two stay in sync.
+export const updatePositioningRequestSchema = z
+  .object({
+    positioningId: z.string().min(1),
+    skillsOrder: positioningDocSchema.shape.skillsOrder.optional(),
+    targetTitle: positioningDocSchema.shape.targetTitle.optional(),
+    summary: positioningDocSchema.shape.summary.optional(),
+  })
+  .refine((body) => body.skillsOrder !== undefined || body.targetTitle !== undefined || body.summary !== undefined, {
+    message: "Request must include at least one change.",
+  });
+
+// Matches lib/cv-data.ts's CvData — the assembled shape sent to POST /api/export-pdf.
+export const cvDataSchema = z.object({
+  photoUrl: z.string(),
+  name: z.string().min(1, "Name is required"),
+  title: z.string(),
+  contact: z.object({
+    email: z.string(),
+    phone: z.string(),
+    location: z.string(),
+    website: websiteSchema,
+  }),
+  summary: z.string(),
+  experience: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      company: z.string(),
+      dates: z.string(),
+      bullets: z.array(z.string()),
+    }),
+  ),
+  education: z.array(
+    z.object({
+      id: z.string(),
+      degree: z.string(),
+      school: z.string(),
+      endDate: z.string(),
+      honors: z.string().optional(),
+      description: z.string().optional(),
+      tags: z.array(z.string()),
+    }),
+  ),
+  skills: z.array(z.string()),
+  languages: z.array(z.object({ lang: z.string(), level: z.string() })),
+});
