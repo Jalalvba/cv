@@ -235,7 +235,8 @@ function positioningWith(bulletSelection: PositioningDoc["bulletSelection"]): Po
     },
   };
   const resultWithAddress = assemble(profileWithAddress, positioningWith({}));
-  assert.equal(resultWithAddress.contact.address, "Lot 56, Bd Moulay Ismail, 20290 Casablanca, Morocco");
+  // city/country are deliberately omitted — contact.location already covers "Casablanca, Morocco"
+  assert.equal(resultWithAddress.contact.address, "Lot 56, Bd Moulay Ismail, 20290");
 
   const profileWithEmptyAddress: ProfileDoc = { ...profile, personal: { ...profile.personal, address: {} } };
   assert.equal(assemble(profileWithEmptyAddress, positioningWith({})).contact.address, undefined);

@@ -13,8 +13,8 @@ export interface ProfileDoc {
     location: string; // display string used on the CV's contact line, e.g. "Casablanca, Morocco" — unrelated to `address` below
     address?: {
       // structured, separate from `location` — for application forms that need broken-out
-      // fields. Also folded into a single formatted line on the CV itself (assemble()'s
-      // contact.address), alongside `location` — the two aren't deduplicated.
+      // fields. street/postalCode are also folded into the CV's contact line (assemble()'s
+      // contact.address); city/country are NOT re-shown there since `location` already covers them.
       street?: string;
       postalCode?: string;
       city?: string;
@@ -80,7 +80,7 @@ export interface CvData {
     email: string;
     phone: string;
     location: string;
-    address?: string; // formatted single line from personal.address, e.g. "Lot 56, Bd Moulay Ismail, Les Roches Noires, 20290 Casablanca, Morocco"
+    address?: string; // street + postalCode only, e.g. "Lot 56, Bd Moulay Ismail, Les Roches Noires, 20290" — city/country are omitted since `location` already shows them
     age?: number; // computed from personal.dateOfBirth at assemble() time
     website?: string;
   };

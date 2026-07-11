@@ -109,8 +109,9 @@ interface ProfileDoc {
     email: string;
     phone: string;
     location: string;        // display string used on the CV's contact line, e.g. "Casablanca, Morocco" — unrelated to `address` below
-    address?: {               // structured, separate from `location`; also folded into one formatted line on the CV itself
-      street?: string;        // (assemble()'s contact.address, alongside — not deduplicated with — location)
+    address?: {               // structured, separate from `location`; street/postalCode also folded into the CV's
+      street?: string;        // contact line (assemble()'s contact.address) — city/country are NOT re-shown there,
+                               // since `location` already covers them (e.g. "Casablanca, Morocco")
       postalCode?: string;
       city?: string;
       country?: string;
@@ -190,7 +191,7 @@ interface CvData {
 }
 ```
 
-`assemble(profile, positioning)`: for each `experience` entry, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets. For each selected bullet, resolve `text` or `textFr` by `positioning.language` — an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** (degrades gracefully, never silent). `education[].description` resolves the same way via `descriptionFr`. `contact.age` is computed from `personal.dateOfBirth` fresh on every call (never cached/stored, so it can't go stale), and `contact.address` is a single formatted line from `personal.address` — both are `undefined` when the source field is unset. `CVDocument.tsx`/`CVPreview.tsx` join `contact.address` and `contact.age` (as `"{n} years"`) into the CV's contact line alongside `email`/`phone`/`location`/`website` — the two components' join logic must stay in sync (see §6). Produced by `GET /api/cv/[positioningId]`, consumed by both `CVPreview.tsx` (Home) and `CVDocument.tsx` (PDF export).
+`assemble(profile, positioning)`: for each `experience` entry, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets. For each selected bullet, resolve `text` or `textFr` by `positioning.language` — an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** (degrades gracefully, never silent). `education[].description` resolves the same way via `descriptionFr`. `contact.age` is computed from `personal.dateOfBirth` fresh on every call (never cached/stored, so it can't go stale), and `contact.address` is `personal.address.street`/`postalCode` only, joined into one line — city/country are deliberately omitted since `contact.location` already shows them, so they aren't duplicated on the same contact line. Both `contact.age`/`contact.address` are `undefined` when the source field is unset. `CVDocument.tsx`/`CVPreview.tsx` join `contact.address` and `contact.age` (as `"{n} years"`) into the CV's contact line alongside `email`/`phone`/`location`/`website` — the two components' join logic must stay in sync (see §6). Produced by `GET /api/cv/[positioningId]`, consumed by both `CVPreview.tsx` (Home) and `CVDocument.tsx` (PDF export).
 
 ## 8. Architecture: public Home vs. gated admin
 

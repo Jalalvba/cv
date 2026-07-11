@@ -42,9 +42,14 @@ function computeAge(dateOfBirthIso: string, today: Date = new Date()): number {
   return age;
 }
 
+// Only street/postalCode — city/country are deliberately dropped here because
+// `contact.location` already displays "{city}, {country}" (e.g. "Casablanca,
+// Morocco"); including them again in this joined-onto-the-same-line string
+// would duplicate that. The full address (all four fields) is still stored
+// and available wherever the raw personal.address object is used directly
+// (e.g. application forms via the admin editor), just not re-shown here.
 function formatAddress(address: NonNullable<ProfileDoc["personal"]["address"]>): string | undefined {
-  const cityLine = [address.postalCode, address.city].filter(Boolean).join(" ");
-  const parts = [address.street, cityLine, address.country].filter(Boolean);
+  const parts = [address.street, address.postalCode].filter(Boolean);
   return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
