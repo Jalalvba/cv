@@ -1,5 +1,11 @@
 import type { ProfileDoc, PositioningDoc, CvData } from "@/lib/cv-data";
 
+/**
+ * Merges a ProfileDoc (facts) + PositioningDoc (selection/framing) into one
+ * CvData for rendering — filters bullets per bulletSelection, resolves
+ * text vs. textFr by language, formats dates. See DOCS.md §7.3.
+ */
+
 const MONTH_NAMES = [
   "January",
   "February",

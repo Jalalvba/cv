@@ -1,3 +1,9 @@
+/**
+ * Canonical types for the whole app: the two MongoDB document shapes
+ * (ProfileDoc, PositioningDoc) and the merged shape assemble() produces from
+ * them (CvData) for rendering — see lib/assemble.ts and DOCS.md §7.
+ */
+
 export interface ProfileDoc {
   _id: "jalal_chafiq";
   personal: {
@@ -41,7 +47,10 @@ export interface PositioningDoc {
   summary: string;
   skillsOrder: string[];
   bulletSelection: {
-    [experienceId: string]: string[]; // which bullet ids to surface for that role; omit a role entirely to drop it from this CV
+    // which bullet ids to surface for that role; omitting a role key currently falls
+    // back to including ALL of that role's bullets — there is no way to drop a role
+    // entirely from a positioning. See DOCS.md §10 known gaps.
+    [experienceId: string]: string[];
   };
   format: "visual" | "ats";
   language: "en" | "fr";
@@ -49,10 +58,9 @@ export interface PositioningDoc {
 }
 
 /**
- * Assembled shape rendered by CVDocument for PDF export — see lib/assemble.ts.
- * Produced by GET /api/cv/[positioningId]; not currently consumed by any page
- * in app/ (the main page now edits ProfileDoc directly, unpositioned) but the
- * route and this shape stay in place for future positioning-based UI.
+ * Assembled shape produced by GET /api/cv/[positioningId] (via assemble()) and
+ * rendered by both components/CVPreview.tsx (web) and components/CVDocument.tsx
+ * (PDF export).
  */
 export interface CvData {
   photoUrl: string;

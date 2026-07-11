@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+/**
+ * zod schemas for every MongoDB document shape and API request body in the
+ * app — mirrors the types in lib/cv-data.ts one-to-one so the two can't
+ * silently drift.
+ */
+
 // Accepts both a bare domain ("chafiqjalal.com") and a full URL
 // ("https://chafiqjalal.com") — lenient on purpose, since this is a
 // display-only contact field, not something the app makes requests to.

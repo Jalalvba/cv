@@ -1,6 +1,6 @@
 # Jalal Chafiq — CV Project — Documentation
 
-Single source of truth for this project: agent-specific operating rules (§1), how to get it running (§2), and the full architecture / data model / design documentation (§3 onward). `README.md` is the short pointer GitHub renders on the repo page; `AGENTS.md` and `CLAUDE.md` both redirect here for agent-instruction discovery.
+Single source of truth for this project: agent-specific operating rules (§1), how to get it running (§2), architecture and data model (§3 onward). `README.md` is the short pointer GitHub renders on the repo page; `AGENTS.md` and `CLAUDE.md` both redirect here for agent-instruction discovery.
 
 ---
 
@@ -16,18 +16,20 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ```bash
 pnpm install
-cp .env.example .env.local   # fill in MONGODB_URI — see §10 Environment variables
+cp .env.example .env.local   # fill in MONGODB_URI, ADMIN_PASSWORD, IRON_SESSION_SECRET — see §9
 pnpm run db:seed             # pushes profile + positionings from scripts/seed.ts into Atlas
 pnpm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000. Log in as Admin (top nav) with `ADMIN_PASSWORD` to edit content.
 
 ## 3. What this is
 
-A CV generator for Jalal Chafiq (Mechanical Engineer, PhD, Technical Manager in Automotive After-Sales & Fleet Management) with **pixel-faithful PDF export**. Instead of hand-editing content in a browser, you pick a **positioning** (e.g. "after_sales_manager", "technical_trainer", "fleet_management") — a named lens onto a fixed set of underlying facts — and the app assembles the matching CV from MongoDB, then renders it to a PDF that looks exactly like the reference design, not a browser-print approximation.
+A CV generator for Jalal Chafiq (Mechanical Engineer, PhD, Technical Manager in Automotive After-Sales & Fleet Management) with **pixel-faithful PDF export**. Pick a **positioning** (e.g. `after_sales_manager_en`) — a named lens onto a fixed set of underlying facts — and the app assembles the matching CV from MongoDB, then renders it to a PDF that looks exactly like the original reference design, not a browser-print approximation.
 
-The underlying facts (roles, dates, every bullet ever written, education, skills) live once in a `profile` document. Each `positioning` document is a *selection and framing* of that same material — which bullets to surface per role, which skills to lead with, what summary paragraph to use, what target title to display — never a duplicate copy of the text. This replaces the earlier contentEditable, no-persistence editor: content is now authored once in MongoDB and reused across every tailored version, instead of retyped per application.
+The underlying facts (roles, dates, every bullet ever written, education, skills, personal info) live once in a `profile` document. Each `positioning` document is a *selection and framing* of that same material — which bullets to surface per role, which skills to lead with, what summary/title to use, which language — never a duplicate copy of the text.
+
+The app has two audiences: anyone with the URL can view and export any CV (`/`, public, read-only); only the admin (single password, session-based) can edit content (`/admin/edit/[positioningId]`) or bulk-seed new positionings (`/admin/positionings`). See §8.
 
 ## 4. Stack
 
@@ -38,94 +40,62 @@ The underlying facts (roles, dates, every bullet ever written, education, skills
 | Styling | Tailwind CSS v4 (CSS-first `@theme` config, no `tailwind.config.js`) |
 | Database | MongoDB Atlas — `cv` database, `profile` and `positionings` collections |
 | PDF generation | `@react-pdf/renderer` (server-side, via a Route Handler) |
+| Auth | `iron-session` — sealed httpOnly cookie, single admin password (see §8.2) |
 | Validation | zod |
 | Package manager | pnpm (always) |
-| Fonts | Inter (web preview, via `next/font/google`) / Helvetica, Helvetica-Bold, Helvetica-Oblique (PDF — the standard PDF base-14 fonts, no font files needed) |
+| Fonts | Inter (web, via `next/font/google`) / Helvetica, Helvetica-Bold, Helvetica-Oblique (PDF — the standard PDF base-14 fonts, no font files needed) |
 
-Dependency health: `pnpm audit` reports **no known vulnerabilities**. One transitive issue was found and fixed during setup — `next@16.2.10` pins a vulnerable `postcss@8.4.31` (moderate XSS advisory) while Tailwind's own postcss dependency was already patched at `8.5.16`. Fixed with a `pnpm.overrides.postcss: "^8.5.10"` pin in `package.json`, which dedupes the whole tree to the patched version. Re-check whether this override is still needed if Next is ever upgraded — the advisory may be fixed upstream by then.
+Dependency health: `pnpm audit` reports no known vulnerabilities as of the last check. `package.json`'s `pnpm.overrides` pins `postcss` (patches a moderate XSS advisory in a transitive `next@16.2.10` dependency) and `google-auth-library`. Re-check whether these overrides are still needed if their parent packages are ever upgraded.
 
 ## 5. Repository layout
 
 ```
 CV/
-├── app/                      the actual Next.js app
-│   ├── page.tsx              positioning picker + generated CV preview + Export PDF button
-│   ├── layout.tsx            fonts (Inter), metadata
-│   ├── globals.css           Tailwind theme tokens
-│   └── api/
-│       ├── positionings/route.ts     GET — list available positioning _ids + targetTitles
-│       ├── cv/[positioningId]/route.ts  GET — assembled CvData for one positioning (profile + positioning merge)
-│       └── export-pdf/route.ts       POST — generates the PDF from an assembled CvData payload
+├── app/
+│   ├── page.tsx                     public Home: role/language picker + read-only CV + Export PDF
+│   ├── layout.tsx                   root layout — fonts, AuthProvider, TopNav
+│   ├── globals.css                  Tailwind theme tokens
+│   ├── admin/
+│   │   ├── edit/page.tsx            redirects to a default positioning's editor
+│   │   ├── edit/[positioningId]/page.tsx   gated full editor (login form if logged out)
+│   │   └── positionings/page.tsx    gated bulk JSON paste-and-seed tool
+│   └── api/                         see §7 for the full route table
 ├── components/
-│   ├── PositioningPicker.tsx  select which positioning to preview/export
-│   ├── CVPreview.tsx          read-only on-screen rendering of the assembled CV
-│   └── CVDocument.tsx         the @react-pdf/renderer document (PDF layout)
+│   ├── AdminLoginForm.tsx           password form, used when the admin area is logged out
+│   ├── CVDocument.tsx               the @react-pdf/renderer PDF layout
+│   ├── CVPreview.tsx                read-only on-screen CV rendering (pixel-matched to CVDocument)
+│   ├── RoleLanguageSelector.tsx     role dropdown + FR/EN toggle, used on Home and in the admin editor
+│   └── TopNav.tsx                   persistent top nav — Home / Admin links only
 ├── lib/
-│   ├── db.ts                  MongoDB client singleton (cached across hot reloads in dev)
-│   ├── cv-data.ts             CvData, ProfileDoc, PositioningDoc types
-│   ├── assemble.ts            merges a ProfileDoc + PositioningDoc into one CvData for rendering
-│   ├── tokens.ts              shared design tokens (colors, mm/pt spacing) — THE source of truth
-│   └── validation.ts          zod schemas: ProfileDoc, PositioningDoc, export-route request body
+│   ├── admin-auth.ts                requireAdminSession() — the gate every /api/admin/* mutation route calls
+│   ├── assemble.ts                  merges ProfileDoc + PositioningDoc → CvData
+│   ├── assemble.test.ts             plain node:assert tests for assemble() — `pnpm run test`
+│   ├── auth-context.tsx             client AuthProvider / useAuth()
+│   ├── cv-data.ts                   ProfileDoc, PositioningDoc, CvData — the canonical types
+│   ├── db.ts                        MongoDB client singleton
+│   ├── google.ts                    Google service-account auth — dev tooling only, not used by the app
+│   ├── session.ts                   iron-session config, getSession()
+│   ├── tokens.ts                    design tokens (colors, mm/pt spacing) — THE source of truth
+│   ├── utils.ts                     slugify()
+│   └── validation.ts                zod schemas mirroring cv-data.ts
 ├── scripts/
-│   └── seed.ts                one-off script: pushes the profile + positioning JSON into MongoDB Atlas
-├── public/photo.jpg           the profile photo (600×600, cropped from template/photo.png)
-├── template/                  REFERENCE MATERIAL ONLY — not part of the app
-│   ├── CV_Jalal_Chafiq_RMA.pdf         reference CV (French, RMA-tailored)
-│   ├── CV_Jalal_Chafiq_Stellantis.pdf  reference CV (English, generic) — original content source
-│   ├── CV de jalal chafiq (1) (1).pdf  older jsPDF-generated CV (different layout — not a design reference)
-│   └── photo.png              original uncropped photo
-├── DOCS.md                    single source of truth (this file)
-├── AGENTS.md                  agent-instructions pointer → DOCS.md §1
-├── CLAUDE.md                  imports DOCS.md
-└── README.md                  short pointer / GitHub landing page
+│   ├── seed.ts                      upserts profile + all positionings into MongoDB Atlas — `pnpm run db:seed`
+│   ├── test-cv-pipeline.ts          fetches live data, runs assemble()+schema validation per positioning
+│   └── test-google-service-account.ts   Drive/Sheets connectivity check for GOOGLE_SERVICE_ACCOUNT_KEY_B64
+├── public/photo.jpg                 profile photo (600×600)
+├── DOCS.md                          single source of truth (this file)
+├── AGENTS.md                        agent-instructions pointer → DOCS.md §1
+├── CLAUDE.md                        `@DOCS.md` import (Claude Code auto-loads this)
+└── README.md                        short pointer / GitHub landing page
 ```
 
-`template/` is excluded from TypeScript checking (`tsconfig.json` → `exclude`) and is not touched by `next build` — it's reference material only, sitting alongside the live project. Earlier archived versions of this project (a static HTML/CSS/JS build, an earlier Next.js+MongoDB rebuild, and the contentEditable no-persistence editor) have been deleted outright rather than kept as in-repo archives — this section is the only remaining record of what they were.
+No `template/` directory anymore — the reference PDFs the design tokens were originally pixel-sampled from have been deleted (never tracked in git, purely historical; the derived values are fully captured in `lib/tokens.ts`, which is what the app actually reads).
 
-### Why the contentEditable editor was replaced
+## 6. Design tokens
 
-The original brief was a single, hand-edited CV with no persistence — refreshing reset to defaults by design. That stopped matching the actual use case once the project scaled to multiple tailored applications (RMA, Stellantis, Dunasys, and future offers): the same underlying facts kept getting retyped and re-worded per application, with no shared source of truth, which is exactly how a "New bullet point" placeholder once shipped into a real PDF. The `profile` / `positionings` split fixes that structurally — every bullet exists exactly once, tagged, and is only ever *referenced* by id from a positioning, never duplicated.
+The visual design (navy `#0B1F33`, amber `#C77D2E`, body `#222222`, grey `#444444`/`#777777`; Helvetica/Helvetica-Bold/Helvetica-Oblique; A4 210×297mm with 18mm margins; 24mm square photo; 10pt body text at 1.2 line-height) was originally pixel-sampled from three reference CV PDFs at 150dpi. All of it lives in **`lib/tokens.ts`**, the single source of truth: `COLORS`, `PAGE`, `PHOTO_SIZE_MM`, `FONT_SIZE`, `SPACING_MM`, `LINE_HEIGHT`, `DIVIDER_THICKNESS_PT`, `mmToPt()`.
 
-## 6. Design tokens — how they were derived
-
-Unchanged from the original build — this section documents the visual design, not the data layer.
-
-The brief specified design tokens said to come from "an existing PDF." That PDF (plus two siblings) turned out to already be sitting in what's now `template/`. Rather than trust the numbers as given, they were **pixel-sampled directly from the reference PDFs** (rendered at 150dpi via `pdftoppm`, sampled with PIL) to confirm exact values and reverse-engineer the ones that weren't specified (line pitch, section spacing).
-
-Confirmed by pixel sampling:
-- Navy `#0B1F33` — exact match, used for name, section headers, role/degree titles
-- Amber `#C77D2E` — exact match, used for the header subtitle, the divider line, and the italic company/dates line in each experience entry
-- Body text `#222222` — exact match, used for paragraphs, bullets, skills, languages
-- Grey `#444444` — exact match, used for the contact line and the education institution/year line
-- Font: `pdffonts` on the reference PDF confirmed literal `Helvetica` / `Helvetica-Bold` / `Helvetica-Oblique` — the PDF standard-14 fonts, so the exported PDF embeds no font files at all and is guaranteed to render identically everywhere
-
-Reverse-measured from the reference's line pitch:
-- Body text line pitch: 25px at 150dpi = 12pt = 10pt font × **1.2** line-height
-- Section-to-section and entry-to-entry gaps are much tighter than a first-pass guess — see `lib/tokens.ts` `SPACING_MM` for the final measured values
-
-All of this lives in **`lib/tokens.ts`**, the single source of truth:
-
-```ts
-COLORS         // navy, amber, body, greyDark, greyLight
-PAGE           // A4 210×297mm, 18mm margins (18mm was also confirmed by pixel-measuring the reference's photo position)
-PHOTO_SIZE_MM  // 24 — the photo is a 24mm square
-FONT_SIZE      // pt sizes: name 22, title 12.5, sectionHeader 12, roleTitle 11, degree 11, body/companyLine 10, contact 9.5, small 9
-SPACING_MM     // mm gaps: photoGap 6, dividerMarginTop/Bottom 3/4, sectionGapTop 1, sectionHeaderGapBottom 1, entryGapTop 1.2, bulletGap 0.5
-LINE_HEIGHT    // 1.2
-DIVIDER_THICKNESS_PT  // 1.2
-mmToPt()       // conversion helper
-```
-
-### Keeping the web preview and PDF pixel-identical
-
-`components/CVPreview.tsx` (the web view) and `components/CVDocument.tsx` (the PDF) are built from the **same numbers** in `lib/tokens.ts`, expressed as **physical CSS units**:
-
-- The web sheet is `w-[210mm] min-h-[297mm] p-[18mm]` — real millimeters, not an approximation. A 24mm photo (`h-[24mm] w-[24mm]`) is the literal physical size it'll be in print.
-- Font sizes are Tailwind arbitrary values in points (`text-[11pt]`), the same unit react-pdf uses natively.
-- `CVDocument.tsx` imports `lib/tokens.ts` directly (plain TS, no build-step issue).
-- `CVPreview.tsx` **cannot** import `lib/tokens.ts` values into Tailwind class strings — Tailwind's JIT compiler needs literal static strings at build time, not runtime-interpolated ones. So the mm/pt literals are hand-copied into the JSX class names. **If you change a value in `lib/tokens.ts`, you must also update the matching literal in `CVPreview.tsx`** (and in `app/globals.css`'s `@theme` block for colors — CSS can't import a TS module either). Each of these spots has a comment pointing back to `tokens.ts`.
-
-Net effect: what you see on screen at `w-[210mm]` is the same physical size as the exported A4 PDF, not just a similar-looking layout.
+**Keeping the web preview and PDF pixel-identical:** `components/CVPreview.tsx` (web) and `components/CVDocument.tsx` (PDF) are built from the same `lib/tokens.ts` numbers, expressed as physical CSS units (`w-[210mm]`, `text-[11pt]`, etc.). `CVDocument.tsx` imports `tokens.ts` directly. `CVPreview.tsx` **cannot** — Tailwind's JIT compiler needs literal static class strings, not runtime-interpolated ones — so the mm/pt literals are hand-copied into its JSX. Likewise `app/globals.css`'s `@theme` block hand-copies the colors (CSS can't import a TS module either). **If you change a value in `tokens.ts`, update the matching literal in both `CVPreview.tsx` and `globals.css`.**
 
 ## 7. Data model
 
@@ -139,6 +109,7 @@ interface ProfileDoc {
     email: string;
     phone: string;
     location: string;
+    website?: string;        // bare domain or full URL, e.g. "chafiqjalal.com" — lenient zod validation, see lib/validation.ts
     languages: { lang: string; level: string }[];
   };
   education: {
@@ -147,6 +118,8 @@ interface ProfileDoc {
     school: string;
     endDate: string;
     honors?: string;
+    description?: string;
+    descriptionFr?: string;  // French translation of `description`; same fallback pattern as bullets' textFr
     tags: string[];
   }[];
   experience: {
@@ -159,44 +132,36 @@ interface ProfileDoc {
     bullets: {
       id: string;            // e.g. "avis_b1"
       text: string;
-      textFr?: string;       // French translation of `text`; see the fallback/warn behavior below
+      textFr?: string;       // French translation of `text`; optional — see the fallback/warn behavior below
       tags: string[];        // e.g. ["ops", "customer_care", "fleet"]
     }[];
   }[];
 }
 ```
 
-Every bullet currently in `profile` has a `textFr` set, but the field is optional in the schema because new bullets can be added in English first and translated later; `assemble()` handles that gap explicitly rather than assuming it can't happen.
+`textFr`/`descriptionFr` are optional because new content can be written in English first and translated later; `assemble()` (§7.3) handles that gap explicitly.
 
 ### 7.2 `positionings` collection — one document per CV variant
 
 ```ts
 interface PositioningDoc {
-  _id: string;                // e.g. "after_sales_manager", "technical_trainer_fr"
+  _id: string;                // "{roleGroup}_{language}", e.g. "after_sales_manager_en"
+  roleGroup: string;          // shared across language variants of the same role, e.g. "after_sales_manager"
   targetTitle: string;        // headline shown under the name
   summary: string;            // professional summary, specific to this positioning
   skillsOrder: string[];      // flat list, rendered as a "•"-joined line, in this exact order
   bulletSelection: {
-    [experienceId: string]: string[]; // which bullet ids to surface for that role; omit a role entirely to drop it from this CV
+    [experienceId: string]: string[]; // which bullet ids to surface for that role; omit a role entirely to include ALL of that role's bullets by default (there is no way to drop a role entirely — see §10)
   };
   format: "visual" | "ats";   // visual = photo/navy/amber design; ats = single-column plain layout
-  language: "en" | "fr";      // selects targetTitle/summary/skillsOrder (already language-specific per document) and, via assemble(), which bullet field (text vs. textFr) is rendered
-  draftTranslation?: boolean; // true = machine-translated, not yet human-reviewed; absent/false = validated content. Purely a review-status flag — doesn't affect rendering or assemble() behavior.
+  language: "en" | "fr";      // selects which of targetTitle/summary/skillsOrder to show, and via assemble(), whether bullets resolve text or textFr
+  draftTranslation?: boolean; // true = machine-translated, not yet human-reviewed; absent/false = validated content. Purely a review-status flag.
 }
 ```
 
-Current positioning `_id`s and language:
+`roleGroup` is what `RoleLanguageSelector` groups by — `GET /api/positionings` returns `{ roleGroup, label, variants: { en?, fr? } }[]`, and the FR/EN toggle switches between two documents that share a `roleGroup`.
 
-| `_id` | `language` | `draftTranslation` |
-|---|---|---|
-| `after_sales_manager` | en | — |
-| `technical_trainer` | en | — |
-| `fleet_management` | en | — |
-| `after_sales_manager_fr` | fr | — (verbatim from the reference French CV, `template/CV_Jalal_Chafiq_RMA.pdf`) |
-| `technical_trainer_fr` | fr | `true` — drafted by translating the English version, not yet human-reviewed |
-| `fleet_management_fr` | fr | `true` — drafted by translating the English version, not yet human-reviewed |
-
-A Dunasys positioning is referenced in passing in §5 (as one of the applications that motivated the `profile`/`positionings` split) but no such document has ever actually been seeded — there's no `dunasys` or `dunasys_fr` `_id` in `scripts/seed.ts`, no reference material for it in `template/`, and no prior git history to recover it from (this repo has no commits predating this documentation). Treat any mention of a Dunasys CV as historical color, not an existing positioning, until one is actually created.
+Currently seeded (`scripts/seed.ts`): `after_sales_manager` (en/fr), `technical_trainer` (en/fr, `ats` format), `fleet_management` (en/fr, `visual` format). Only `fleet_management_fr` is currently flagged `draftTranslation: true`.
 
 ### 7.3 Assembled `CvData` — what actually gets rendered (`lib/assemble.ts`)
 
@@ -205,87 +170,83 @@ interface CvData {
   photoUrl: string;
   name: string;
   title: string;              // = positioning.targetTitle
-  contact: { email: string; phone: string; location: string };
+  contact: { email: string; phone: string; location: string; website?: string };
   summary: string;            // = positioning.summary
   experience: {
     id: string; title: string; company: string; dates: string;
     bullets: string[];        // resolved text, filtered + ordered per positioning.bulletSelection
   }[];
-  education: ProfileDoc["education"]; // currently unfiltered — every positioning shows full education
+  education: Omit<ProfileDoc["education"][number], "descriptionFr">[]; // unfiltered — every positioning shows full education
   skills: string[];           // = positioning.skillsOrder
   languages: ProfileDoc["personal"]["languages"];
 }
 ```
 
-`assemble(profile, positioning)` does the merge: for each `experience` entry in `profile`, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets by default. Role exclusion (dropping a role entirely for a given positioning) is not yet implemented — see §13.
+`assemble(profile, positioning)`: for each `experience` entry, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets. For each selected bullet, resolve `text` or `textFr` by `positioning.language` — an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** (degrades gracefully, never silent). `education[].description` resolves the same way via `descriptionFr`. Produced by `GET /api/cv/[positioningId]`, consumed by both `CVPreview.tsx` (Home) and `CVDocument.tsx` (PDF export).
 
-For each selected bullet's text, `assemble()` picks `text` or `textFr` based on `positioning.language`: an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, and otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** — a missing translation degrades to English content rather than failing the request, but is never silent.
+## 8. Architecture: public Home vs. gated admin
 
-## 8. How generation actually works
+### 8.1 Public Home (`/`, `app/page.tsx`)
 
-1. `app/page.tsx` calls `GET /api/positionings` on load, populates `PositioningPicker.tsx` with the available `_id` / `targetTitle` pairs.
-2. Selecting a positioning triggers `GET /api/cv/[positioningId]`, which fetches both the single `profile` document and the matching `positionings` document from MongoDB Atlas, runs `assemble()`, and returns the resulting `CvData`.
-3. `CVPreview.tsx` renders that `CvData` read-only on screen at physical `w-[210mm]` size (see §6).
-4. Clicking "Export PDF" does `POST /api/export-pdf` with the same `CvData` payload.
-5. The route validates the body against `lib/validation.ts`, resolves `photoUrl` (a `/photo.jpg` web path) to an actual file `Buffer` by reading from `public/` — a web path isn't a valid image source for a Node-side PDF render, so this conversion happens in the route, not in `CVDocument.tsx` (which stays a pure, environment-agnostic component and accepts an optional `photoSrc` override prop for exactly this purpose).
-6. `renderToBuffer()` (from `@react-pdf/renderer`) renders `<CVDocument data={...} photoSrc={...} />` to a PDF buffer, server-side.
-7. Response is returned with `Content-Type: application/pdf` and a `Content-Disposition: attachment` header with a slugified filename (`lib/utils.ts`'s `slugify()`, based on `positioning._id`).
-8. Client turns the response `Blob` into an object URL and triggers a download via a temporary `<a download>` click — no `window.print()`, no CSS print media queries anywhere in this project.
+Fully read-only, and has **no awareness of login state at all** — it never imports the auth context. Flow: `GET /api/positionings` on load → pick a default role/language → `GET /api/cv/[positioningId]` → render via `CVPreview.tsx`. "Export as PDF" re-fetches the current `CvData` and `POST`s it to `/api/export-pdf`, then triggers a browser download. Switching role/language via `RoleLanguageSelector` just updates local state and re-fetches — no route change.
 
-The export route runs with `export const runtime = "nodejs"` — required, since `@react-pdf/renderer` isn't Edge-compatible. The `cv/[positioningId]` and `positionings` routes can run on Edge if desired (plain MongoDB reads, no PDF work) but currently share the Node.js runtime for simplicity.
+### 8.2 Auth model (`iron-session`)
 
-One TypeScript wrinkle worth knowing about: `renderToBuffer()`'s type signature demands a literal `React.ReactElement<DocumentProps>` (i.e. an actual `<Document>` element), but `CVDocument` is a wrapper component around one. The element shape matches at runtime but not nominally, so there's a single, explicitly-commented cast at that boundary in `route.ts` — not a systemic `any`-everywhere workaround.
+Single-admin, password-based — not multi-user, no username.
 
-## 9. Editing content
+- `lib/session.ts` — `getSession()` wraps `getIronSession(cookies(), sessionOptions)`. The cookie (`cv_session`) is **sealed and httpOnly, not a JWT** — its contents (`{ isLoggedIn: boolean }`) are opaque to the browser. `IRON_SESSION_SECRET` (32+ chars) is the seal/unseal key; missing or too-short throws immediately.
+- `POST /api/auth/login` — checks the posted password against `ADMIN_PASSWORD`, sets `session.isLoggedIn = true`, saves (sets the cookie).
+- `POST /api/auth/logout` — `session.destroy()`.
+- `GET /api/auth/status` — used on every page load (via `AuthProvider` in `lib/auth-context.tsx`) to decide read-only vs. editable render *before* any click, not just after.
+- `lib/admin-auth.ts`'s `requireAdminSession()` — the server-side gate every `/api/admin/*` **mutation** route calls first; returns a 401 `NextResponse` if not logged in, or `null` to let the route proceed. This is what actually matters for security — the client-side `isLoggedIn` checks only control what's rendered, they don't gate the writes.
 
-There is no in-browser content editor anymore. To change what appears on any CV:
+There is no token-based auth anywhere in this codebase anymore (an earlier `ADMIN_TOKEN`/`x-admin-token` header scheme was fully replaced by the above).
 
-- **New bullet, new role, new education entry, corrected fact**: edit the `profile` document directly in MongoDB Atlas (via the Atlas UI, `mongosh`, or by editing `scripts/seed.ts` and re-running it — re-running the seed script upserts by `_id`, it does not duplicate).
-- **New CV variant, retarget an existing one, reorder skills, rewrite the summary for one application**: edit or add a `positionings` document the same way.
-- **New offer that doesn't fit an existing positioning**: add a new `PositioningDoc` with a fresh `_id`, referencing existing bullet ids from `profile` — no new prose needs writing unless the offer genuinely needs a bullet that's never been said before, in which case that bullet is added once to the relevant role in `profile` and tagged, then referenced.
+### 8.3 Admin editor (`/admin/edit/[positioningId]`)
 
-`scripts/seed.ts` is the recommended path for anything beyond a one-line tweak, since it's versioned in the repo (unlike ad hoc Atlas UI edits) and re-running it is idempotent.
+Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and pre-fills a single JSON textarea with `{ profile: ProfileDoc, positioning: PositioningDoc }` — the real, current documents, not a template. There is no per-field UI (no individual inputs for name/email/education/bullets/skills); the intended workflow is generating replacement JSON externally via an AI assistant (using the schema template on §8.4) and pasting it back in.
 
-## 10. Deployment
+"Save changes" parses the textarea, validates the two halves against `profileDocSchema`/`positioningDocSchema` (the same full-document schemas `seed-positioning` uses — see `lib/validation.ts`), and on success diffs each against the last-loaded snapshot (`app/admin/edit/[positioningId]/diff.ts`'s `diffProfile`/`diffPositioning`). Only the fields `PATCH /api/admin/update-profile` and `/api/admin/update-positioning` actually support — personal info minus `languages`, education minus `tags`, bullet `text`/`textFr`, and `skillsOrder`/`targetTitle`/`summary` respectively — get sent; everything else that changed (`tags`, `personal.languages`, `bulletSelection`, `format`, `language`, `roleGroup`, adding/removing/reordering education/experience/bullets) is reported back as "not saved" rather than silently dropped. Restructuring those fields still goes through §8.4's full-document replace. Changing `positioning._id` is rejected outright (renaming isn't supported by `update-positioning`). "Preview PDF" / "Export & Download" work the same as Home's export, plus there's a "Seed Positionings" link to §8.4 and a "Logout" button.
 
-### Environment variables
+### 8.4 Bulk seed tool (`/admin/positionings`)
 
-| Variable | Description |
-|---|---|
-| `MONGODB_URI` | MongoDB Atlas connection string, `cv` database. Never hardcoded — see `.env.example` for the placeholder format, and confirm `.env.local` is in `.gitignore`. |
+Also gated (client shows disabled fields when logged out; server-side `POST /api/admin/seed-positioning` is gated regardless). Above the paste form, a collapsible "Show target JSON schema" section (`lib/schema-templates.ts`) shows the annotated `PositioningDoc`/`ProfileDoc` TypeScript shapes plus a real, live example of each (fetched from `GET /api/profile` and `GET /api/admin/positioning/after_sales_manager_fr` at render time, so the example never goes stale) — meant to be handed to an external AI assistant to generate new positioning JSON. Paste one `PositioningDoc` JSON object or an array, submit — validates against `positioningDocSchema` and `replaceOne(..., { upsert: true })`s each by `_id`. No preview step; submitting writes immediately.
 
-### Deploying to Vercel
+## 9. Environment variables
 
-Import the repo or run `vercel` from this directory — Vercel detects `pnpm-lock.yaml` and uses pnpm automatically. Two requirements beyond the original no-database setup:
+| Variable | Required for | Notes |
+|---|---|---|
+| `MONGODB_URI` | The whole app (every DB read/write) | MongoDB Atlas connection string, `cv` database |
+| `IRON_SESSION_SECRET` | Admin auth (`lib/session.ts`) | 32+ random chars, e.g. `openssl rand -hex 32`. Never commit a real value. |
+| `ADMIN_PASSWORD` | Admin login (`/api/auth/login`) | Single password, not hashed — this is a personal single-user tool, not a multi-user system. |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_B64` | Nothing in the deployed app | Only read by `scripts/test-google-service-account.ts` (dev tooling, not imported by any `app/` route) |
+| `GOOGLE_DRIVE_TEST_FOLDER_ID`, `GOOGLE_SHEETS_TEST_SPREADSHEET_ID` | Nothing in the deployed app | Same script as above |
 
-- Add `MONGODB_URI` in the Vercel project's Environment Variables (Production + Preview) — pointing at the same Atlas cluster, or a separate one if you want preview deployments isolated from production data.
-- `/api/export-pdf` must run on the Node.js runtime (already set via `export const runtime = "nodejs"`), not Edge.
+`.env.example` documents the placeholder format for all of these; `.env.local` is gitignored. Confirm `.gitignore` still excludes `.env*` (except `.env.example`) before ever committing.
 
-## 11. Scripts
+## 10. Known gaps / possible future work
+
+- **Pagination**: page breaks fall only between whole entries (`wrap={false}`), never mid-bullet. A positioning with many included bullets across all roles may still export to 2 pages.
+- **No role exclusion**: `assemble()` always includes every role from `profile.experience`; a positioning can only filter *which bullets* appear per role (§7.2), not drop a role entirely.
+- **No versioning/audit trail**: editing `profile`/`positioning` overwrites in place; no history of what a given exported PDF actually contained when sent to an employer.
+- **No photo upload UI**: the photo is a fixed asset (`public/photo.jpg`); swapping it means replacing that file directly.
+- **Single shared admin password**: fine for a single-user personal tool; would need real multi-user auth if this is ever shared.
+
+## 11. Deployment
+
+Vercel project **`avis/cv`** (linked via `vercel link`). Custom domain **chafiqjalal.com** is attached to this project, but as of the last check its nameservers didn't match what Vercel expects (Cloudflare nameservers detected, verification showing ✘) — confirm DNS is actually resolving before treating the custom domain as live; the `*.vercel.app` production URL is confirmed `Ready` independent of that.
+
+- Import the repo or run `vercel` from this directory — Vercel detects `pnpm-lock.yaml` and uses pnpm automatically.
+- Set `MONGODB_URI`, `IRON_SESSION_SECRET`, `ADMIN_PASSWORD` in the Vercel project's Environment Variables (Production + Preview) — see §9. Add via the dashboard UI; the CLI's `--value` flag has been unreliable for this project.
+- `/api/export-pdf` must run on the Node.js runtime (already set via `export const runtime = "nodejs"`), not Edge — `@react-pdf/renderer` isn't Edge-compatible.
+
+## 12. Scripts
 
 - `pnpm run dev` — dev server
 - `pnpm run build` — production build
 - `pnpm run start` — run the production build locally
 - `pnpm run lint` — ESLint
-- `pnpm run db:seed` — runs `scripts/seed.ts`, upserting `profile` and all `positionings` documents into MongoDB Atlas
-
-## 12. Verification performed (not just typechecked)
-
-Carried over from the original build (still true, unaffected by the data-layer change):
-- `tsc --noEmit`, `eslint`, `next build`, `pnpm audit` all pass clean
-- Rendered the exported PDF to images (`pdftoppm`) and visually compared against the reference PDFs — matched closely enough that a side-by-side is hard to tell apart
-
-Re-verified after the MongoDB migration (against a temporary local `mongod`, seeded via `scripts/seed.ts`):
-- [x] Confirmed `GET /api/positionings` returns all seeded documents
-- [x] Confirmed `GET /api/cv/[positioningId]` correctly filters bullets per `bulletSelection` and falls back to "all bullets" when a role is omitted from the selection (verified against real seeded data, not just the unit test — e.g. `exp_dekra` is omitted from `after_sales_manager`'s `bulletSelection` and correctly renders all 3 of its bullets)
-- [x] Confirmed the export PDF for `after_sales_manager` (`visual`) and `technical_trainer` (`ats`) both render and visually match the reference design at 150dpi via `pdftoppm`
-- [x] Confirmed `scripts/seed.ts` is idempotent — ran it twice, `profile` and `positionings` collection counts stayed at 1 and 3 respectively
-- [x] Confirmed `GET /api/cv/<unknown-id>` returns 404
-
-## 13. Known gaps / possible future work
-
-- **Pagination**: unchanged from the original build — page breaks fall only between whole entries (`wrap={false}`), never mid-bullet. A positioning with a lot of included bullets across all four roles may still export to 2 pages; matching the reference's exact 1-page density for arbitrary content would require smaller type or tighter margins than the reference itself uses, which would start to visually diverge from the "exact design" brief.
-- **No role exclusion yet**: `assemble()` currently always includes every role from `profile.experience`; a positioning can only filter *which bullets* appear per role, not drop a role entirely (e.g. hiding DEKRA for a positioning where it's irrelevant). Documented as a real limitation in §7.3, not yet built.
-- **No versioning/audit trail**: editing `profile` or a `positioning` in Atlas overwrites in place; there's no history of what a given exported PDF actually contained at the time it was sent to a given employer. Worth adding if this matters later (e.g. a `sentAt` / `snapshot` field on export).
-- **No auth**: the app has no login. Anyone with the deployed URL can view/export any positioning. Acceptable for a single-user personal tool, not acceptable if this is ever shared or made public.
-- **No photo upload UI**: unchanged — the photo is a fixed asset (`public/photo.jpg`); swapping it means replacing that file directly.
+- `pnpm run test` — runs `lib/assemble.test.ts` (plain `node:assert`, no framework)
+- `pnpm run db:seed` — runs `scripts/seed.ts`, upserting `profile` and all `positionings` into MongoDB Atlas
+- `pnpm run test:cv-pipeline` — fetches live Atlas data, runs `assemble()` + schema validation per positioning, reports bullet counts
+- `pnpm run test:google` — Drive/Sheets connectivity check for the (currently app-unused) Google service account

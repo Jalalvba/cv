@@ -2,6 +2,12 @@ import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/render
 import type { CvData } from "@/lib/cv-data";
 import { COLORS, FONT_SIZE, SPACING_MM, PAGE, PHOTO_SIZE_MM, DIVIDER_THICKNESS_PT, LINE_HEIGHT, mmToPt } from "@/lib/tokens";
 
+/**
+ * The @react-pdf/renderer PDF document — server-rendered by
+ * app/api/export-pdf/route.ts. Built from the same lib/tokens.ts numbers as
+ * components/CVPreview.tsx (the web view), so the two stay pixel-identical.
+ */
+
 const styles = StyleSheet.create({
   page: {
     paddingTop: mmToPt(PAGE.marginMm),

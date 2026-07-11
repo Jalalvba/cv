@@ -35,9 +35,9 @@ const profile: ProfileDoc = {
       endDate: "2024",
       honors: "Highest Honors",
       description:
-        "Doctoral research and coursework in mechanical engineering: electromagnetism, non-destructive testing (NDT), and composite materials — dynamic and static mechanical behavior of natural hybrid composites.",
+        "Doctoral research and coursework in mechanical engineering: electromagnetism, non-destructive testing (NDT), and composite materials — dynamic and static mechanical behavior of natural hybrid composites. Taught engineering students, alongside doctoral work, in materials science, electromagnetism, and automotive embedded systems diagnostics.",
       descriptionFr:
-        "Recherche doctorale et formation en génie mécanique : électromagnétisme, contrôle non destructif (CND), et matériaux composites — comportement mécanique dynamique et statique des composites hybrides naturels.",
+        "Recherche doctorale et formation en génie mécanique : électromagnétisme, contrôle non destructif (CND), et matériaux composites — comportement mécanique dynamique et statique des composites hybrides naturels. Enseignement, en parallèle du doctorat, auprès d'élèves ingénieurs : cours de matériaux, d'électromagnétisme, et de diagnostic des systèmes embarqués automobiles.",
       tags: ["engineering", "research"],
     },
     {
@@ -109,6 +109,13 @@ const profile: ProfileDoc = {
             "Application d'une expertise pratique en diagnostic automobile — analyse du protocole bus CAN, services de diagnostic UDS, interprétation de bulletins techniques constructeur — au dépannage et au développement d'outils internes de la flotte.",
           tags: ["diagnostics", "can_bus", "uds", "technical_trainer", "oem"],
         },
+        {
+          id: "avis_b6",
+          text: "Led a genuine multi-brand upskilling effort across the fleet's diverse vehicle brands: technical support on complex cases, training on diagnostic tooling use, SAV process compliance, and planning of external training delivered by outside providers (OFPPT).",
+          textFr:
+            "À AVIS, un véritable volet de montée en compétence a été réalisé pour les marques multimarques de notre flotte : support technique sur les cas complexes, formation à l'utilisation de l'outillage de diagnostic, respect des processus SAV, et planification de formations externes réalisées par des prestataires externes (OFPPT).",
+          tags: ["training", "multi_brand", "diagnostics", "technical_trainer"],
+        },
       ],
     },
     {
@@ -146,6 +153,13 @@ const profile: ProfileDoc = {
             "Coordination avec les constructeurs pour garantir la conformité aux standards de marque et la qualité de service.",
           tags: ["compliance", "oem"],
         },
+        {
+          id: "autohall_b5",
+          text: "Delivered ongoing team training in coordination with subsidiaries and the regional technical department, and provided technical support to teams on complex cases.",
+          textFr:
+            "Formation continue des équipes réalisée en coordination avec les filiales et le service technique régional, et apport d'un support technique aux équipes sur les cas complexes.",
+          tags: ["training", "technical_support", "technical_trainer"],
+        },
       ],
     },
     {
@@ -180,6 +194,13 @@ const profile: ProfileDoc = {
           textFr: "Suivi des indicateurs de performance et mise en œuvre de mesures correctives.",
           tags: ["kpi", "continuous_improvement"],
         },
+        {
+          id: "sadvw_b5",
+          text: "Guided technicians on interpreting OEM technical bulletins, correct use of repair manuals, and warranty procedure compliance. Supported technicians through the manufacturer's certification path, from base technician level to master level. Planned and enrolled staff in manufacturer-delivered training programs.",
+          textFr:
+            "Accompagnement des techniciens dans l'interprétation des bulletins techniques constructeur, la bonne utilisation des manuels de réparation et le respect des procédures de garantie. Accompagnement des techniciens dans leur parcours de certification, du niveau technicien de base jusqu'au niveau master. Planification et inscription des agents aux formations dispensées par le constructeur.",
+          tags: ["training", "certification", "oem", "pedagogy", "technical_trainer"],
+        },
       ],
     },
     {
@@ -209,6 +230,13 @@ const profile: ProfileDoc = {
           text: "Managed relationships with an external partner ecosystem over a 7-year period.",
           textFr: "Gestion de la relation avec un écosystème de partenaires externes sur 7 ans.",
           tags: ["partner_network", "fleet"],
+        },
+        {
+          id: "dekra_b4",
+          text: "Trained vehicle inspection agents on regulatory compliance and quality management system procedures for control operations. Coached agents toward passing certification exams for their professional aptitude credential, and supported them through internal/external audits and government administration inspections.",
+          textFr:
+            "Formation des agents visiteurs des centres de contrôle technique selon la réglementation en vigueur, et sur le respect du système de management qualité au bon déroulement des opérations de contrôle. Accompagnement des agents visiteurs pour la réussite de leurs formations en vue de l'obtention du certificat d'aptitude professionnelle. Accompagnement des agents visiteurs pour la réussite des audits internes et externes, ainsi que des inspections de l'administration.",
+          tags: ["training", "pedagogy", "compliance", "certification", "technical_trainer"],
         },
       ],
     },
@@ -255,17 +283,23 @@ const positionings: PositioningDoc[] = [
     skillsOrder: [
       "Technical Training & Team Development",
       "OEM Standards Coordination",
-      "Dealer Network Liaison",
-      "Manufacturer Quality Process Compliance",
-      "Performance Management",
+      "Technician Certification Coaching",
+      "Regulatory & Quality Compliance Training",
       "Automotive Diagnostics (CAN, UDS)",
       "OEM Technical Bulletin Interpretation",
+      "Performance Management",
     ],
     bulletSelection: {
-      exp_avis: ["avis_b3", "avis_b5"],
-      exp_auto_hall: ["autohall_b4"],
-      exp_sad_vw: ["sadvw_b1", "sadvw_b3"],
-      // exp_dekra intentionally omitted — falls back to all of DEKRA's bullets by default.
+      // Every role explicit — no role omitted, so assemble()'s fallback-to-all-bullets
+      // never triggers for this positioning. exp_dekra used to be omitted here (falling
+      // back to all 3 of DEKRA's bullets, including dekra_b1/dekra_b2 which are about
+      // center management and commercial development — not training, and not a fit for
+      // a Technical Trainer CV). Now it resolves to only dekra_b4, the training-specific
+      // bullet added alongside this fix.
+      exp_avis: ["avis_b3", "avis_b5", "avis_b6"],
+      exp_auto_hall: ["autohall_b4", "autohall_b5"],
+      exp_sad_vw: ["sadvw_b1", "sadvw_b3", "sadvw_b5"],
+      exp_dekra: ["dekra_b4"],
     },
     format: "ats",
     language: "en",
@@ -333,17 +367,23 @@ const positionings: PositioningDoc[] = [
     skillsOrder: [
       "Formation technique & développement d'équipe",
       "Coordination avec constructeurs (standards OEM)",
-      "Liaison réseau concessionnaires",
-      "Conformité aux processus qualité constructeur",
-      "Management de la performance",
+      "Accompagnement à la certification technicien",
+      "Formation réglementaire & conformité qualité",
       "Diagnostic automobile (CAN, UDS)",
       "Interprétation de bulletins techniques constructeur",
+      "Management de la performance",
     ],
     bulletSelection: {
-      exp_avis: ["avis_b3", "avis_b5"],
-      exp_auto_hall: ["autohall_b4"],
-      exp_sad_vw: ["sadvw_b1", "sadvw_b3"],
-      // exp_dekra intentionally omitted — falls back to all of DEKRA's bullets by default.
+      // Every role explicit — no role omitted, so assemble()'s fallback-to-all-bullets
+      // never triggers for this positioning. exp_dekra used to be omitted here (falling
+      // back to all 3 of DEKRA's bullets, including dekra_b1/dekra_b2 which are about
+      // center management and commercial development — not training, and not a fit for
+      // a Technical Trainer CV). Now it resolves to only dekra_b4, the training-specific
+      // bullet added alongside this fix.
+      exp_avis: ["avis_b3", "avis_b5", "avis_b6"],
+      exp_auto_hall: ["autohall_b4", "autohall_b5"],
+      exp_sad_vw: ["sadvw_b1", "sadvw_b3", "sadvw_b5"],
+      exp_dekra: ["dekra_b4"],
     },
     format: "ats",
     language: "fr",

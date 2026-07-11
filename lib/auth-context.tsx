@@ -2,6 +2,12 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
+/**
+ * Client-side session state: AuthProvider (mounted once in app/layout.tsx)
+ * checks GET /api/auth/status on load, and useAuth() exposes isLoggedIn +
+ * login()/logout() to any component (TopNav, AdminLoginForm, admin pages).
+ */
+
 interface AuthContextValue {
   isLoggedIn: boolean;
   /** True once the initial GET /api/auth/status check has resolved. */

@@ -1,5 +1,7 @@
 import { MongoClient } from "mongodb";
 
+/** Cached MongoDB client singleton — getDb() is what every route/script actually calls. */
+
 const uri = process.env.MONGODB_URI;
 
 if (!uri) {

@@ -1,6 +1,12 @@
 import { cookies } from "next/headers";
 import { getIronSession, type IronSession, type SessionOptions } from "iron-session";
 
+/**
+ * iron-session config: a sealed, httpOnly cookie (not a JWT) holding just
+ * isLoggedIn. getSession() is the one entry point every admin route and the
+ * client's /api/auth/* routes use to read/write it — see lib/admin-auth.ts.
+ */
+
 export interface SessionData {
   isLoggedIn: boolean;
 }

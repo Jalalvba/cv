@@ -1,3 +1,8 @@
+/**
+ * Plain node:assert unit tests for assemble() — run via `pnpm run test`.
+ * No test framework/runner: each block below throws on failure; a clean
+ * run ends with the "all assertions passed" line.
+ */
 import assert from "node:assert/strict";
 import { assemble } from "./assemble";
 import type { ProfileDoc, PositioningDoc } from "./cv-data";

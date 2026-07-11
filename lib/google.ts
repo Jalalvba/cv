@@ -1,5 +1,10 @@
 import { google, Auth } from "googleapis";
 
+/**
+ * Google service-account auth helper. Dev tooling only — used by
+ * scripts/test-google-service-account.ts, not imported by any app/ route.
+ */
+
 const SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.readonly",

@@ -18,12 +18,12 @@ interface RoleLanguageSelectorProps {
 }
 
 /**
- * Role + language picker for app/edit/[positioningId]/page.tsx. Adapted from the
- * grouping logic originally in the deleted components/PositioningPicker.tsx (role
- * dropdown + FR/EN toggle over GET /api/positionings' roleGroup/variants shape) —
- * the difference is this one derives its selected state from the current URL's
- * positioningId instead of owning local selection state, and calls onNavigate()
- * so the caller can do a client-side route change instead of an onSelect callback.
+ * Role + language picker (dropdown + FR/EN toggle) over GET /api/positionings'
+ * roleGroup/variants shape. Used on both the public Home page (app/page.tsx,
+ * where onNavigate just updates local state) and the admin editor
+ * (app/admin/edit/[positioningId]/page.tsx, where onNavigate does a route
+ * change) — it has no opinion on which, it just reports the chosen
+ * positioning _id and derives its selected state from currentPositioningId.
  */
 export function RoleLanguageSelector({ currentPositioningId, onNavigate }: RoleLanguageSelectorProps) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
