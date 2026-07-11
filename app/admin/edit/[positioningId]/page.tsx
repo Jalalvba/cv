@@ -1,24 +1,45 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+/**
+ * Gated admin editor for one positioning: a raw JSON editor for the profile
+ * + positioning documents, Preview PDF, Export & Download, Save changes.
+ * Logged out renders only <AdminLoginForm /> — no data fetch, no CV content
+ * — see the isLoggedIn checks below. Logged-in data flow: GET /api/profile +
+ * /api/admin/positioning/[id] + /api/cv/[id] on load (combined into one
+ * { profile, positioning } JSON blob pre-filling the textarea), PATCH
+ * /api/admin/update-profile and/or /api/admin/update-positioning on save
+ * (existing targeted-edit routes, reused as-is — see the diff* helpers
+ * below for exactly which edited fields those routes can actually persist).
+ *
+ * Replaces the previous field-by-field editor (deleted, not archived — see
+ * git history if that per-field UI is ever needed for reference) to match
+ * how this tool is actually used: generating JSON externally via an AI
+ * assistant using the schema template on /admin/positionings, then pasting
+ * the result back in here.
+ */
+
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import type { ProfileDoc, PositioningDoc, CvData } from "@/lib/cv-data";
+import { profileDocSchema, positioningDocSchema } from "@/lib/validation";
+import { zodIssues, type ZodIssueLike } from "@/lib/zod-issues";
 import { slugify } from "@/lib/utils";
 import { RoleLanguageSelector } from "@/components/RoleLanguageSelector";
 import { useAuth } from "@/lib/auth-context";
 import { AdminLoginForm } from "@/components/AdminLoginForm";
-
-type PersonalField = "name" | "email" | "phone" | "location" | "website";
-type EducationField = "degree" | "school" | "endDate" | "honors";
-type BulletField = "text" | "textFr";
-
-const PERSONAL_FIELDS: PersonalField[] = ["name", "email", "phone", "location", "website"];
-const EDUCATION_FIELDS: EducationField[] = ["degree", "school", "endDate", "honors"];
+import { ZodIssuesList } from "@/components/ZodIssuesList";
+import { diffProfile, diffPositioning } from "./diff";
 
 interface SaveOutcome {
   ok: boolean;
   detail: string;
+}
+
+interface SaveResult {
+  profile?: SaveOutcome;
+  positioning?: SaveOutcome;
+  unsupported: string[];
 }
 
 export default function EditPositioningPage() {
@@ -27,18 +48,19 @@ export default function EditPositioningPage() {
   const positioningId = params.positioningId;
   const { isLoggedIn, statusLoaded, logout } = useAuth();
 
-  const [profile, setProfile] = useState<ProfileDoc | null>(null);
   const [originalProfile, setOriginalProfile] = useState<ProfileDoc | null>(null);
-  const [positioning, setPositioning] = useState<PositioningDoc | null>(null);
   const [originalPositioning, setOriginalPositioning] = useState<PositioningDoc | null>(null);
   const [cvData, setCvData] = useState<CvData | null>(null);
+  const [jsonText, setJsonText] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [validationIssues, setValidationIssues] = useState<ZodIssueLike[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveResult, setSaveResult] = useState<{ profile?: SaveOutcome; positioning?: SaveOutcome } | null>(null);
+  const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -68,10 +90,9 @@ export default function EditPositioningPage() {
     ])
       .then(([profileData, positioningData, cvDataResult]) => {
         if (cancelled) return;
-        setProfile(profileData);
         setOriginalProfile(profileData);
-        setPositioning(positioningData);
         setOriginalPositioning(positioningData);
+        setJsonText(JSON.stringify({ profile: profileData, positioning: positioningData }, null, 2));
         setCvData(cvDataResult);
       })
       .catch((err) => {
@@ -93,25 +114,6 @@ export default function EditPositioningPage() {
     };
   }, [previewUrl]);
 
-  const bulletField: BulletField = positioning?.language === "fr" ? "textFr" : "text";
-
-  // Which experience/bullets this positioning actually includes — mirrors
-  // lib/assemble.ts's bulletSelection fallback (an omitted role shows all its bullets).
-  const scopedGroups = useMemo(() => {
-    if (!profile || !positioning) return [];
-    return profile.experience
-      .map((exp) => {
-        const selectedIds = positioning.bulletSelection[exp.id];
-        const bullets = selectedIds
-          ? selectedIds
-              .map((id) => exp.bullets.find((b) => b.id === id))
-              .filter((b): b is ProfileDoc["experience"][number]["bullets"][number] => b !== undefined)
-          : exp.bullets;
-        return { experienceId: exp.id, title: exp.title, company: exp.company, bullets };
-      })
-      .filter((group) => group.bullets.length > 0);
-  }, [profile, positioning]);
-
   // Reset page state for a role/language switch in the event handler (not in an
   // effect), so the "Loading…" state shows immediately during client-side navigation
   // instead of leaving the previous positioning's data on screen while re-fetching.
@@ -119,6 +121,8 @@ export default function EditPositioningPage() {
     if (nextPositioningId === positioningId) return;
     setLoading(true);
     setLoadError(null);
+    setParseError(null);
+    setValidationIssues([]);
     setSaveResult(null);
     setSaveError(null);
     setPreviewUrl(null);
@@ -126,111 +130,80 @@ export default function EditPositioningPage() {
     router.push(`/admin/edit/${nextPositioningId}`);
   }
 
-  function updatePersonal(field: PersonalField, value: string) {
-    setProfile((prev) => (prev ? { ...prev, personal: { ...prev.personal, [field]: value } } : prev));
-  }
-
-  function updateEducation(id: string, field: EducationField, value: string) {
-    setProfile((prev) =>
-      prev ? { ...prev, education: prev.education.map((e) => (e.id === id ? { ...e, [field]: value } : e)) } : prev,
-    );
-  }
-
-  function updateBullet(experienceId: string, bulletId: string, value: string) {
-    setProfile((prev) =>
-      prev
-        ? {
-            ...prev,
-            experience: prev.experience.map((exp) =>
-              exp.id === experienceId
-                ? {
-                    ...exp,
-                    bullets: exp.bullets.map((b) => (b.id === bulletId ? { ...b, [bulletField]: value } : b)),
-                  }
-                : exp,
-            ),
-          }
-        : prev,
-    );
-  }
-
-  function updateSkill(index: number, value: string) {
-    setPositioning((prev) =>
-      prev ? { ...prev, skillsOrder: prev.skillsOrder.map((s, i) => (i === index ? value : s)) } : prev,
-    );
-  }
-
-  function addSkill() {
-    setPositioning((prev) => (prev ? { ...prev, skillsOrder: [...prev.skillsOrder, ""] } : prev));
-  }
-
-  function removeSkill(index: number) {
-    setPositioning((prev) => (prev ? { ...prev, skillsOrder: prev.skillsOrder.filter((_, i) => i !== index) } : prev));
-  }
-
-  function moveSkill(index: number, direction: -1 | 1) {
-    setPositioning((prev) => {
-      if (!prev) return prev;
-      const target = index + direction;
-      if (target < 0 || target >= prev.skillsOrder.length) return prev;
-      const next = [...prev.skillsOrder];
-      [next[index], next[target]] = [next[target], next[index]];
-      return { ...prev, skillsOrder: next };
-    });
-  }
-
   async function handleSave() {
-    if (!profile || !originalProfile || !positioning || !originalPositioning) return;
-
-    const personalDiff: Partial<Record<PersonalField, string>> = {};
-    for (const field of PERSONAL_FIELDS) {
-      const current = profile.personal[field] ?? "";
-      const before = originalProfile.personal[field] ?? "";
-      if (current !== before) personalDiff[field] = current;
-    }
-
-    const educationDiff: (Partial<Record<EducationField, string>> & { id: string })[] = [];
-    for (const edu of profile.education) {
-      const orig = originalProfile.education.find((e) => e.id === edu.id);
-      if (!orig) continue;
-      const fields: Partial<Record<EducationField, string>> = {};
-      for (const field of EDUCATION_FIELDS) {
-        const current = edu[field] ?? "";
-        const before = orig[field] ?? "";
-        if (current !== before) fields[field] = current;
-      }
-      if (Object.keys(fields).length > 0) educationDiff.push({ id: edu.id, ...fields });
-    }
-
-    const bulletsDiff: { experienceId: string; bulletId: string; text: string; field: BulletField }[] = [];
-    for (const exp of profile.experience) {
-      const origExp = originalProfile.experience.find((e) => e.id === exp.id);
-      if (!origExp) continue;
-      for (const bullet of exp.bullets) {
-        const origBullet = origExp.bullets.find((b) => b.id === bullet.id);
-        if (!origBullet) continue;
-        const current = bullet[bulletField] ?? "";
-        const before = origBullet[bulletField] ?? "";
-        if (current !== before) {
-          bulletsDiff.push({ experienceId: exp.id, bulletId: bullet.id, text: current, field: bulletField });
-        }
-      }
-    }
-
-    const skillsChanged = JSON.stringify(positioning.skillsOrder) !== JSON.stringify(originalPositioning.skillsOrder);
-    const hasProfileChanges = Object.keys(personalDiff).length > 0 || educationDiff.length > 0 || bulletsDiff.length > 0;
-
-    if (!hasProfileChanges && !skillsChanged) {
-      setSaveError(null);
-      setSaveResult({});
-      return;
-    }
+    if (!originalProfile || !originalPositioning) return;
 
     setSaving(true);
+    setParseError(null);
+    setValidationIssues([]);
     setSaveError(null);
     setSaveResult(null);
 
-    const results: { profile?: SaveOutcome; positioning?: SaveOutcome } = {};
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (err) {
+      setSaving(false);
+      setParseError(err instanceof Error ? err.message : "Invalid JSON");
+      return;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      setSaving(false);
+      setParseError('Expected a JSON object shaped { "profile": {...}, "positioning": {...} }, not an array or primitive.');
+      return;
+    }
+    const obj = parsed as Record<string, unknown>;
+    if (!("profile" in obj) || !("positioning" in obj)) {
+      setSaving(false);
+      setParseError('Expected a JSON object with both "profile" and "positioning" keys.');
+      return;
+    }
+
+    const profileResult = profileDocSchema.safeParse(obj.profile);
+    const positioningResult = positioningDocSchema.safeParse(obj.positioning);
+
+    const issues: ZodIssueLike[] = [
+      ...(profileResult.success ? [] : zodIssues(profileResult.error).map((i) => ({ ...i, path: `profile.${i.path}` }))),
+      ...(positioningResult.success
+        ? []
+        : zodIssues(positioningResult.error).map((i) => ({ ...i, path: `positioning.${i.path}` }))),
+    ];
+    if (issues.length > 0 || !profileResult.success || !positioningResult.success) {
+      setSaving(false);
+      setValidationIssues(issues);
+      setSaveError(`Validation failed: ${issues.length} issue(s) below.`);
+      return;
+    }
+
+    const editedProfile = profileResult.data;
+    const editedPositioning = positioningResult.data;
+
+    if (editedPositioning._id !== positioningId) {
+      setSaving(false);
+      setSaveError(
+        `positioning._id must stay "${positioningId}" — renaming a positioning isn't supported here; use the Seed Positioning JSON tool instead.`,
+      );
+      return;
+    }
+
+    const { patch: profilePatch, unsupported: profileUnsupported } = diffProfile(originalProfile, editedProfile);
+    const { patch: positioningPatch, unsupported: positioningUnsupported } = diffPositioning(
+      originalPositioning,
+      editedPositioning,
+    );
+    const unsupported = [...profileUnsupported, ...positioningUnsupported];
+
+    const hasProfileChanges = Object.keys(profilePatch).length > 0;
+    const hasPositioningChanges = Object.keys(positioningPatch).length > 0;
+
+    if (!hasProfileChanges && !hasPositioningChanges) {
+      setSaving(false);
+      setSaveResult({ unsupported });
+      return;
+    }
+
+    const results: SaveResult = { unsupported };
     const requests: Promise<void>[] = [];
 
     if (hasProfileChanges) {
@@ -238,11 +211,7 @@ export default function EditPositioningPage() {
         fetch("/api/admin/update-profile", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...(Object.keys(personalDiff).length > 0 ? { personal: personalDiff } : {}),
-            ...(educationDiff.length > 0 ? { education: educationDiff } : {}),
-            ...(bulletsDiff.length > 0 ? { bullets: bulletsDiff } : {}),
-          }),
+          body: JSON.stringify(profilePatch),
         })
           .then(async (res) => {
             const data = await res.json();
@@ -251,7 +220,7 @@ export default function EditPositioningPage() {
               return;
             }
             results.profile = { ok: true, detail: `Saved: ${(data.saved ?? []).join(", ")}` };
-            setOriginalProfile(profile);
+            setOriginalProfile(editedProfile);
           })
           .catch((err) => {
             results.profile = { ok: false, detail: err instanceof Error ? err.message : "Request failed" };
@@ -259,12 +228,12 @@ export default function EditPositioningPage() {
       );
     }
 
-    if (skillsChanged) {
+    if (hasPositioningChanges) {
       requests.push(
         fetch("/api/admin/update-positioning", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positioningId, skillsOrder: positioning.skillsOrder }),
+          body: JSON.stringify({ positioningId, ...positioningPatch }),
         })
           .then(async (res) => {
             const data = await res.json();
@@ -273,7 +242,7 @@ export default function EditPositioningPage() {
               return;
             }
             results.positioning = { ok: true, detail: `Saved: ${(data.saved ?? []).join(", ")}` };
-            setOriginalPositioning(positioning);
+            setOriginalPositioning(editedPositioning);
           })
           .catch((err) => {
             results.positioning = { ok: false, detail: err instanceof Error ? err.message : "Request failed" };
@@ -364,9 +333,11 @@ export default function EditPositioningPage() {
           <div>
             <h1 className="text-sm font-semibold text-neutral-800">Edit positioning: {positioningId}</h1>
             <p className="text-xs text-neutral-500">
-              {positioning
-                ? `language: ${positioning.language} — format: ${positioning.format} — bullets edit ${bulletField === "textFr" ? "textFr" : "text"} in profile`
-                : "Bullets, skills, personal info, and education for this positioning."}
+              Edit the JSON below, then Save changes.{" "}
+              <Link href="/admin/positionings" className="underline hover:no-underline">
+                See target JSON schema &amp; example
+              </Link>
+              .
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -395,7 +366,7 @@ export default function EditPositioningPage() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || !profile || !positioning}
+              disabled={saving || loading || !originalProfile || !originalPositioning}
               className="rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save changes"}
@@ -417,7 +388,21 @@ export default function EditPositioningPage() {
       {loadError ? <p className="mx-6 mt-4 text-xs text-red-600">{loadError}</p> : null}
       {exportError ? <p className="mx-6 mt-4 text-xs text-red-600">Export failed: {exportError}</p> : null}
       {previewError ? <p className="mx-6 mt-4 text-xs text-red-600">Preview failed: {previewError}</p> : null}
-      {saveError ? <p className="mx-6 mt-4 text-xs text-red-600">{saveError}</p> : null}
+
+      {parseError ? (
+        <div className="mx-6 mt-4 rounded border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-800">
+          <p className="font-semibold">Couldn&apos;t parse JSON:</p>
+          <p className="mt-1">{parseError}</p>
+        </div>
+      ) : null}
+
+      {saveError ? (
+        <div className="mx-6 mt-4 rounded border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-800">
+          <p>{saveError}</p>
+          <ZodIssuesList issues={validationIssues} />
+        </div>
+      ) : null}
+
       {saveResult ? (
         <div className="mx-6 mt-4 flex flex-col gap-1 text-xs">
           {saveResult.profile ? (
@@ -427,10 +412,20 @@ export default function EditPositioningPage() {
           ) : null}
           {saveResult.positioning ? (
             <p className={saveResult.positioning.ok ? "text-green-700" : "text-red-600"}>
-              Positioning (skills): {saveResult.positioning.ok ? "✓" : "✗"} {saveResult.positioning.detail}
+              Positioning (skills/title/summary): {saveResult.positioning.ok ? "✓" : "✗"} {saveResult.positioning.detail}
             </p>
           ) : null}
           {!saveResult.profile && !saveResult.positioning ? <p className="text-neutral-500">No changes to save.</p> : null}
+          {saveResult.unsupported.length > 0 ? (
+            <div className="mt-1 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+              <p className="font-semibold">Not saved — not supported by Save yet (edit these via the Seed Positioning JSON tool, or the change was a structural add/remove):</p>
+              <ul className="mt-1 list-disc pl-4">
+                {saveResult.unsupported.map((u, i) => (
+                  <li key={i}>{u}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -443,8 +438,8 @@ export default function EditPositioningPage() {
 
       {loading ? (
         <p className="mt-12 text-center text-sm text-neutral-500">Loading…</p>
-      ) : profile && positioning ? (
-        <div className="mx-auto my-8 max-w-3xl px-6">
+      ) : (
+        <div className="mx-auto my-8 max-w-4xl px-6">
           {cvData ? (
             <section className="rounded border border-neutral-200 bg-neutral-50 p-4">
               <h2 className="text-sm font-semibold text-cv-navy">Assembled title &amp; summary (text preview)</h2>
@@ -454,120 +449,23 @@ export default function EditPositioningPage() {
           ) : null}
 
           <section className="mt-8">
-            <h2 className="text-sm font-semibold text-cv-navy">Personal</h2>
-            <div className="mt-3 grid grid-cols-2 gap-4">
-              {PERSONAL_FIELDS.map((field) => (
-                <label key={field} className="flex flex-col gap-1 text-xs">
-                  <span className="font-medium capitalize text-neutral-700">{field}</span>
-                  <input
-                    value={profile.personal[field] ?? ""}
-                    onChange={(e) => updatePersonal(field, e.target.value)}
-                    placeholder={field === "website" ? "example.com" : undefined}
-                    className="rounded border border-neutral-300 px-3 py-2"
-                  />
-                </label>
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-8 border-t border-neutral-200 pt-6">
-            <h2 className="text-sm font-semibold text-cv-navy">Education</h2>
-            <div className="mt-3 flex flex-col gap-4">
-              {profile.education.map((edu) => (
-                <div key={edu.id} className="rounded border border-neutral-200 p-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    {EDUCATION_FIELDS.map((field) => (
-                      <label key={field} className="flex flex-col gap-1 text-xs">
-                        <span className="font-medium capitalize text-neutral-700">{field}</span>
-                        <input
-                          value={edu[field] ?? ""}
-                          onChange={(e) => updateEducation(edu.id, field, e.target.value)}
-                          className="rounded border border-neutral-300 px-3 py-2"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-8 border-t border-neutral-200 pt-6">
-            <h2 className="text-sm font-semibold text-cv-navy">
-              Experience bullets included in this positioning ({bulletField === "textFr" ? "editing textFr" : "editing text"})
-            </h2>
-            <div className="mt-3 flex flex-col gap-6">
-              {scopedGroups.map((group) => (
-                <div key={group.experienceId}>
-                  <p className="text-xs font-semibold text-neutral-800">
-                    {group.title} — {group.company}
-                  </p>
-                  <ul className="mt-2 flex flex-col gap-2">
-                    {group.bullets.map((bullet) => (
-                      <li key={bullet.id}>
-                        <textarea
-                          value={bullet[bulletField] ?? ""}
-                          onChange={(e) => updateBullet(group.experienceId, bullet.id, e.target.value)}
-                          rows={2}
-                          className="w-full rounded border border-neutral-300 px-3 py-2 text-xs"
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-8 border-t border-neutral-200 pt-6">
-            <h2 className="text-sm font-semibold text-cv-navy">Skills (this positioning only)</h2>
-            <div className="mt-3 flex flex-col gap-2">
-              {positioning.skillsOrder.map((skill, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    value={skill}
-                    onChange={(e) => updateSkill(i, e.target.value)}
-                    className="flex-1 rounded border border-neutral-300 px-3 py-2 text-xs"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => moveSkill(i, -1)}
-                    disabled={i === 0}
-                    aria-label="Move up"
-                    className="rounded border border-neutral-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveSkill(i, 1)}
-                    disabled={i === positioning.skillsOrder.length - 1}
-                    aria-label="Move down"
-                    className="rounded border border-neutral-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeSkill(i)}
-                    aria-label="Remove skill"
-                    className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={addSkill}
-                className="mt-2 self-start rounded border border-cv-navy px-3 py-2 text-xs font-semibold text-cv-navy hover:bg-cv-navy/5"
-              >
-                + Add skill
-              </button>
-            </div>
+            <h2 className="text-sm font-semibold text-cv-navy">Profile &amp; positioning JSON</h2>
+            <p className="mt-1 text-xs text-neutral-500">
+              This is the full profile document plus this positioning&apos;s document, pre-filled with the current data.
+              Edit and click Save changes above. Only a subset of fields can actually be persisted by Save — see the
+              amber warning after saving if you changed something outside that subset (e.g. tags, bulletSelection,
+              adding/removing bullets or roles); those still go through the Seed Positioning JSON tool.
+            </p>
+            <textarea
+              value={jsonText}
+              onChange={(e) => setJsonText(e.target.value)}
+              rows={36}
+              spellCheck={false}
+              className="mt-3 w-full rounded border border-neutral-300 px-3 py-2 font-mono text-xs"
+            />
           </section>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
