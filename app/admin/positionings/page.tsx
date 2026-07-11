@@ -97,7 +97,7 @@ export default function AdminPositioningsPage() {
               <ul className="mt-2 flex flex-col gap-1">
                 {[...result.created, ...result.updated].map((id) => (
                   <li key={id}>
-                    <Link href={`/edit/${id}`} className="font-semibold underline hover:no-underline">
+                    <Link href={`/admin/edit/${id}`} className="font-semibold underline hover:no-underline">
                       Edit &amp; export this positioning ({id})
                     </Link>
                   </li>
