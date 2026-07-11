@@ -6,6 +6,7 @@ import React from "react";
 import { CVDocument } from "@/components/CVDocument";
 import { cvDataSchema } from "@/lib/validation";
 import { slugify } from "@/lib/utils";
+import { parseJsonBody } from "@/lib/api-errors";
 
 export const runtime = "nodejs";
 
@@ -21,14 +22,10 @@ async function resolvePhotoSrc(): Promise<Buffer> {
 }
 
 export async function POST(request: NextRequest) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const parsedBody = await parseJsonBody<unknown>(request);
+  if (!parsedBody.ok) return parsedBody.response;
 
-  const parsed = cvDataSchema.safeParse(body);
+  const parsed = cvDataSchema.safeParse(parsedBody.data);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }

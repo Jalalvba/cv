@@ -2,29 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/admin-auth";
 import { updatePositioningRequestSchema } from "@/lib/validation";
+import { parseJsonBody, zodErrorResponse } from "@/lib/api-errors";
 import type { PositioningDoc } from "@/lib/cv-data";
 
 export const runtime = "nodejs";
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export async function PATCH(request: NextRequest) {
   const authError = await requireAdminSession();
   if (authError) return authError;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch (err) {
-    return NextResponse.json({ error: `Invalid JSON: ${errorMessage(err)}` }, { status: 400 });
-  }
+  const parsedBody = await parseJsonBody<unknown>(request);
+  if (!parsedBody.ok) return parsedBody.response;
 
-  const parsed = updatePositioningRequestSchema.safeParse(body);
+  const parsed = updatePositioningRequestSchema.safeParse(parsedBody.data);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
-    return NextResponse.json({ error: issues[0]?.message ?? "Validation failed", issues }, { status: 400 });
+    return zodErrorResponse(parsed);
   }
   const { positioningId, skillsOrder, targetTitle, summary } = parsed.data;
 

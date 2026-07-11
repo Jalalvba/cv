@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
+import { parseJsonBody } from "@/lib/api-errors";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
+  const parsedBody = await parseJsonBody<unknown>(request);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
 
   const password = typeof body === "object" && body !== null ? (body as { password?: unknown }).password : undefined;
   if (typeof password !== "string" || password.length === 0) {

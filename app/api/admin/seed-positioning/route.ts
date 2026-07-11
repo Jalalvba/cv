@@ -2,25 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { positioningDocSchema } from "@/lib/validation";
 import { requireAdminSession } from "@/lib/admin-auth";
+import { errorMessage, parseJsonBody, zodErrorResponse } from "@/lib/api-errors";
 import type { PositioningDoc } from "@/lib/cv-data";
 
 export const runtime = "nodejs";
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export async function POST(request: NextRequest) {
   const authError = await requireAdminSession();
   if (authError) return authError;
 
-  const rawText = await request.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch (err) {
-    return NextResponse.json({ error: `Invalid JSON: ${errorMessage(err)}` }, { status: 400 });
-  }
+  // This route accepts a hand-pasted JSON blob (see app/admin/positionings/page.tsx),
+  // so the raw parser message is worth surfacing to help find a typo in a large paste —
+  // unlike the other four routes' small, program-generated bodies.
+  const parsedBody = await parseJsonBody<unknown>(request, { includeParseDetail: true });
+  if (!parsedBody.ok) return parsedBody.response;
+  const parsed = parsedBody.data;
 
   const items = Array.isArray(parsed) ? parsed : [parsed];
   if (items.length === 0) {
@@ -33,15 +29,7 @@ export async function POST(request: NextRequest) {
     const result = positioningDocSchema.safeParse(item);
     if (!result.success) {
       const itemId = item && typeof item === "object" && "_id" in item ? String((item as { _id: unknown })._id) : "unknown _id";
-      const issues = result.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
-      return NextResponse.json(
-        {
-          error: `Validation failed for item ${i} (${itemId}): ${issues[0].path || "(root)"} — ${issues[0].message}`,
-          itemIndex: i,
-          issues,
-        },
-        { status: 400 },
-      );
+      return zodErrorResponse(result, { prefix: `Validation failed for item ${i} (${itemId})` });
     }
     validated.push(result.data);
   }
