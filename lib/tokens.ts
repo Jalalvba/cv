@@ -18,7 +18,7 @@ export const COLORS = {
 export const PAGE = {
   widthMm: 210,
   heightMm: 297,
-  marginMm: 18,
+  marginMm: 12,
 } as const;
 
 export const PHOTO_SIZE_MM = 24;

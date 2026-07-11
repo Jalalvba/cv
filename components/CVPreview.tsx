@@ -15,7 +15,7 @@ const SKILLS_SEPARATOR = "   •   ";
 
 export function CVPreview({ data }: { data: CvData }) {
   return (
-    <div className="w-[210mm] min-h-[297mm] bg-white p-[18mm] text-[10pt] leading-[1.2] text-cv-body shadow-md">
+    <div className="w-[210mm] min-h-[297mm] bg-white p-[12mm] text-[10pt] leading-[1.2] text-cv-body shadow-md">
       <div className="flex items-start">
         {data.photoUrl ? (
           // Physical CV photo, not decorative — but there's no caption text to use as alt.
