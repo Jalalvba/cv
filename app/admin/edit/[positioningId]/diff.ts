@@ -3,14 +3,30 @@ import type { ProfileDoc, PositioningDoc } from "@/lib/cv-data";
 import { updateProfileRequestSchema, updatePositioningRequestSchema } from "@/lib/validation";
 
 /**
- * Pure diffing logic for the JSON editor's Save button on
+ * Pure diffing logic for the Save button on
  * app/admin/edit/[positioningId]/page.tsx — split out from the page component
  * so it's plain, testable TypeScript with no React/DOM dependency.
+ *
+ * Every field on ProfileDoc/PositioningDoc that the form editor exposes is
+ * covered here and lands in `patch` (not `unsupported`) — see
+ * lib/validation.ts's updateProfileRequestSchema/updatePositioningRequestSchema,
+ * which were extended alongside this rebuild specifically so `personal.languages`,
+ * education/bullet `tags`, `bulletSelection`, and adding/removing whole
+ * education entries stop being silently dropped (the gap the prior
+ * JSON-editor session's amber "not saved" panel surfaced, but didn't
+ * close). `unsupported` still exists for the fields genuinely out of scope
+ * for a targeted PATCH — adding/removing a whole experience (role) entry,
+ * a role's title/company/location/dates, adding a brand-new bullet with
+ * new text (bullets are only ever *selected into* a positioning via
+ * bulletSelection, never authored fresh here), and renaming/restructuring
+ * a positioning's `_id`/`roleGroup`/`format`/`language`/`draftTranslation`
+ * — those still go through the Seed Positioning JSON tool's full-document
+ * replace.
  */
 
 export type UpdateProfileBody = z.infer<typeof updateProfileRequestSchema>;
 export type UpdatePositioningPatch = Partial<
-  Pick<z.infer<typeof updatePositioningRequestSchema>, "skillsOrder" | "targetTitle" | "summary">
+  Pick<z.infer<typeof updatePositioningRequestSchema>, "skillsOrder" | "targetTitle" | "summary" | "bulletSelection">
 >;
 
 const PERSONAL_PATCH_FIELDS = ["name", "email", "phone", "location", "website"] as const;
@@ -18,13 +34,12 @@ const EDUCATION_PATCH_FIELDS = ["degree", "school", "endDate", "honors", "descri
 
 /**
  * Diffs the edited ProfileDoc against the last-loaded snapshot and returns
- * only what PATCH /api/admin/update-profile can actually persist (personal
- * minus languages, education minus tags, bullet text/textFr — see
- * lib/validation.ts's updateProfileRequestSchema). Anything else the user
- * changed (languages, tags, experience metadata, added/removed/reordered
- * entries) is reported in `unsupported` instead of silently dropped, since
- * this route was never built to write those fields — the old per-field
- * editor simply never exposed them either, it just did so less visibly.
+ * everything PATCH /api/admin/update-profile can persist. `unsupported`
+ * covers only structural adds/removes (new/removed education or experience
+ * entries, new/removed bullets, experience metadata like title/company/
+ * dates) — there's no "add a new bullet" or "add an experience entry"
+ * control in the form editor, so those can only happen via a raw edit to
+ * the loaded data shape, which shouldn't occur through normal form use.
  */
 export function diffProfile(original: ProfileDoc, edited: ProfileDoc): { patch: UpdateProfileBody; unsupported: string[] } {
   const unsupported: string[] = [];
@@ -36,37 +51,42 @@ export function diffProfile(original: ProfileDoc, edited: ProfileDoc): { patch: 
     const after = edited.personal[field] ?? "";
     if (before !== after) personalPatch[field] = after;
   }
-  if (Object.keys(personalPatch).length > 0) patch.personal = personalPatch;
   if (JSON.stringify(original.personal.languages) !== JSON.stringify(edited.personal.languages)) {
-    unsupported.push("personal.languages (not editable via Save)");
+    personalPatch.languages = edited.personal.languages;
   }
+  if (Object.keys(personalPatch).length > 0) patch.personal = personalPatch;
 
   const educationPatch: NonNullable<UpdateProfileBody["education"]> = [];
+  const educationAddPatch: NonNullable<UpdateProfileBody["educationAdd"]> = [];
   const originalEduById = new Map(original.education.map((e) => [e.id, e]));
   const editedEduIds = new Set(edited.education.map((e) => e.id));
   for (const edu of edited.education) {
     const before = originalEduById.get(edu.id);
     if (!before) {
-      unsupported.push(`education "${edu.id}" (new entries can't be added via Save)`);
+      educationAddPatch.push(edu);
       continue;
     }
-    const fields: Partial<Record<(typeof EDUCATION_PATCH_FIELDS)[number], string>> = {};
+    const fields: Partial<Record<(typeof EDUCATION_PATCH_FIELDS)[number], string>> & { tags?: string[] } = {};
     for (const field of EDUCATION_PATCH_FIELDS) {
       const b = before[field] ?? "";
       const a = edu[field] ?? "";
       if (b !== a) fields[field] = a;
     }
-    if (Object.keys(fields).length > 0) educationPatch.push({ id: edu.id, ...fields });
     if (JSON.stringify(before.tags) !== JSON.stringify(edu.tags)) {
-      unsupported.push(`education "${edu.id}" tags (not editable via Save)`);
+      fields.tags = edu.tags;
     }
+    if (Object.keys(fields).length > 0) educationPatch.push({ id: edu.id, ...fields });
   }
+  const educationRemovePatch: NonNullable<UpdateProfileBody["educationRemove"]> = [];
   for (const before of original.education) {
-    if (!editedEduIds.has(before.id)) unsupported.push(`education "${before.id}" (removal not supported via Save)`);
+    if (!editedEduIds.has(before.id)) educationRemovePatch.push(before.id);
   }
   if (educationPatch.length > 0) patch.education = educationPatch;
+  if (educationAddPatch.length > 0) patch.educationAdd = educationAddPatch;
+  if (educationRemovePatch.length > 0) patch.educationRemove = educationRemovePatch;
 
   const bulletsPatch: NonNullable<UpdateProfileBody["bullets"]> = [];
+  const bulletTagsPatch: NonNullable<UpdateProfileBody["bulletTags"]> = [];
   const originalExpById = new Map(original.experience.map((e) => [e.id, e]));
   for (const exp of edited.experience) {
     const beforeExp = originalExpById.get(exp.id);
@@ -99,7 +119,7 @@ export function diffProfile(original: ProfileDoc, edited: ProfileDoc): { patch: 
         bulletsPatch.push({ experienceId: exp.id, bulletId: bullet.id, text: bullet.textFr ?? "", field: "textFr" });
       }
       if (JSON.stringify(bullet.tags) !== JSON.stringify(beforeBullet.tags)) {
-        unsupported.push(`bullet "${bullet.id}" tags on "${exp.id}" (not editable via Save)`);
+        bulletTagsPatch.push({ experienceId: exp.id, bulletId: bullet.id, tags: bullet.tags });
       }
     }
     for (const beforeBullet of beforeExp.bullets) {
@@ -114,17 +134,18 @@ export function diffProfile(original: ProfileDoc, edited: ProfileDoc): { patch: 
     }
   }
   if (bulletsPatch.length > 0) patch.bullets = bulletsPatch;
+  if (bulletTagsPatch.length > 0) patch.bulletTags = bulletTagsPatch;
 
   return { patch, unsupported };
 }
 
 /**
- * Same idea as diffProfile, for PATCH /api/admin/update-positioning: only
- * skillsOrder/targetTitle/summary are writable there (see
- * updatePositioningRequestSchema); bulletSelection/format/language/
- * roleGroup/draftTranslation changes are reported as unsupported rather
- * than silently dropped — restructuring those still goes through the Seed
- * Positioning JSON tool's full-document replace.
+ * Same idea as diffProfile, for PATCH /api/admin/update-positioning:
+ * skillsOrder/targetTitle/summary/bulletSelection are all writable there
+ * (see updatePositioningRequestSchema). format/language/roleGroup/
+ * draftTranslation and renaming `_id` are still reported as unsupported —
+ * restructuring those still goes through the Seed Positioning JSON tool's
+ * full-document replace.
  */
 export function diffPositioning(
   original: PositioningDoc,
@@ -136,10 +157,10 @@ export function diffPositioning(
   if (JSON.stringify(original.skillsOrder) !== JSON.stringify(edited.skillsOrder)) patch.skillsOrder = edited.skillsOrder;
   if (original.targetTitle !== edited.targetTitle) patch.targetTitle = edited.targetTitle;
   if (original.summary !== edited.summary) patch.summary = edited.summary;
-
   if (JSON.stringify(original.bulletSelection) !== JSON.stringify(edited.bulletSelection)) {
-    unsupported.push("bulletSelection (not editable via Save — use the Seed Positioning JSON tool)");
+    patch.bulletSelection = edited.bulletSelection;
   }
+
   if (original.format !== edited.format) unsupported.push("format (not editable via Save)");
   if (original.language !== edited.language) unsupported.push("language (not editable via Save)");
   if (Boolean(original.draftTranslation) !== Boolean(edited.draftTranslation)) {

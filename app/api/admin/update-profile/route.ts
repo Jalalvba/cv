@@ -20,7 +20,7 @@ export async function PATCH(request: NextRequest) {
   if (!parsed.success) {
     return zodErrorResponse(parsed);
   }
-  const { personal, education, bullets } = parsed.data;
+  const { personal, education, bullets, bulletTags, educationAdd, educationRemove } = parsed.data;
 
   const db = await getDb();
   const collection = db.collection<ProfileDoc>("profile");
@@ -39,8 +39,18 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: `Unknown education id: "${edu.id}"` }, { status: 400 });
     }
   }
+  for (const id of educationRemove ?? []) {
+    if (!educationIds.has(id)) {
+      return NextResponse.json({ error: `Unknown education id: "${id}"` }, { status: 400 });
+    }
+  }
+  for (const e of educationAdd ?? []) {
+    if (educationIds.has(e.id)) {
+      return NextResponse.json({ error: `Education id "${e.id}" already exists — ids must be unique` }, { status: 400 });
+    }
+  }
   const bulletIdsByExperience = new Map(profile.experience.map((exp) => [exp.id, new Set(exp.bullets.map((b) => b.id))]));
-  for (const b of bullets ?? []) {
+  for (const b of [...(bullets ?? []), ...(bulletTags ?? [])]) {
     const bulletIds = bulletIdsByExperience.get(b.experienceId);
     if (!bulletIds || !bulletIds.has(b.bulletId)) {
       return NextResponse.json(
@@ -53,7 +63,9 @@ export async function PATCH(request: NextRequest) {
   const saved: string[] = [];
 
   if (personal && Object.keys(personal).length > 0) {
-    const setFields: Record<string, string> = {};
+    // Values here are a mix of strings (name/email/...) and the languages
+    // array — both are just "replace this field's whole value" $set writes.
+    const setFields: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(personal)) {
       setFields[`personal.${field}`] = value;
       saved.push(`personal.${field}`);
@@ -64,9 +76,9 @@ export async function PATCH(request: NextRequest) {
   for (const edu of education ?? []) {
     const { id, ...fields } = edu;
     if (Object.keys(fields).length === 0) continue;
-    const setFields: Record<string, string> = {};
+    const setFields: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(fields)) {
-      setFields[`education.$[edu].${field}`] = value as string;
+      setFields[`education.$[edu].${field}`] = value;
       saved.push(`education.${id}.${field}`);
     }
     // arrayFilters placeholder paths (e.g. "education.$[edu].degree") aren't
@@ -88,6 +100,33 @@ export async function PATCH(request: NextRequest) {
       { arrayFilters: [{ "exp.id": b.experienceId }, { "bul.id": b.bulletId }] },
     );
     saved.push(`experience.${b.experienceId}.bullets.${b.bulletId}.${field}`);
+  }
+
+  for (const bt of bulletTags ?? []) {
+    await collection.updateOne(
+      { _id: PROFILE_ID },
+      { $set: { [`experience.$[exp].bullets.$[bul].tags`]: bt.tags } } as UpdateFilter<ProfileDoc>,
+      { arrayFilters: [{ "exp.id": bt.experienceId }, { "bul.id": bt.bulletId }] },
+    );
+    saved.push(`experience.${bt.experienceId}.bullets.${bt.bulletId}.tags`);
+  }
+
+  // Removal before addition — arbitrary but deterministic; the two can never
+  // target the same id (checked above), so order doesn't affect correctness.
+  if (educationRemove && educationRemove.length > 0) {
+    await collection.updateOne(
+      { _id: PROFILE_ID },
+      { $pull: { education: { id: { $in: educationRemove } } } } as UpdateFilter<ProfileDoc>,
+    );
+    saved.push(...educationRemove.map((id) => `education.${id} (removed)`));
+  }
+
+  if (educationAdd && educationAdd.length > 0) {
+    await collection.updateOne(
+      { _id: PROFILE_ID },
+      { $push: { education: { $each: educationAdd } } } as UpdateFilter<ProfileDoc>,
+    );
+    saved.push(...educationAdd.map((e) => `education.${e.id} (added)`));
   }
 
   return NextResponse.json({ saved });

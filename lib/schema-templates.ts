@@ -75,3 +75,5 @@ interface ProfileDoc {
 
 /** Known-stable example ids, seeded by scripts/seed.ts — used to fetch a real, complete, always-current example. */
 export const EXAMPLE_POSITIONING_ID = "after_sales_manager_fr";
+export const EXAMPLE_POSITIONING_ID_EN = "after_sales_manager_en";
+export const EXAMPLE_POSITIONING_ID_FR = EXAMPLE_POSITIONING_ID;

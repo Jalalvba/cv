@@ -65,12 +65,19 @@ export const profileDocSchema = z.object({
 // Targeted-edit request body for PATCH /api/admin/update-profile — a partial
 // view of profileDocSchema's own field shapes, plus id keys used to locate
 // the specific array element to update. Requires at least one change.
+//
+// `personal` and `education` are NOT `.omit()`-ing anything anymore (they
+// used to omit `languages`/`tags` respectively) — the field-by-field editor
+// on app/admin/edit/[positioningId]/page.tsx needs to write those too, and a
+// value present in a partial() patch always means "replace this field's
+// entire value," the same semantics every other field here already has
+// (e.g. `website`), so no new update semantics were introduced, just two
+// more fields wired up to the existing ones. `bulletTags` is a new sibling
+// to `bullets` (which only ever wrote `text`/`textFr`) for the same reason.
 export const updateProfileRequestSchema = z
   .object({
-    personal: profileDocSchema.shape.personal.omit({ languages: true }).partial(),
-    education: z.array(
-      profileDocSchema.shape.education.element.omit({ tags: true }).partial().extend({ id: z.string().min(1) }),
-    ),
+    personal: profileDocSchema.shape.personal.partial(),
+    education: z.array(profileDocSchema.shape.education.element.partial().extend({ id: z.string().min(1) })),
     bullets: z.array(
       z.object({
         experienceId: z.string().min(1),
@@ -83,13 +90,34 @@ export const updateProfileRequestSchema = z
         field: z.enum(["text", "textFr"]).optional(),
       }),
     ),
+    bulletTags: z.array(
+      z.object({
+        experienceId: z.string().min(1),
+        bulletId: z.string().min(1),
+        tags: z.array(z.string()),
+      }),
+    ),
+    // Structural add/remove for whole education entries — kept separate from
+    // `education` (which patches fields on an EXISTING entry via arrayFilters)
+    // rather than turning `education` into a full-array replace, so a patch
+    // to one entry's fields still can't accidentally clobber the others.
+    // The form editor's Add/Remove entry controls need this: unlike bullets
+    // (only ever *selected into* a positioning via bulletSelection, never
+    // authored fresh) or languages/bulletSelection (naturally a single
+    // full-value field), education entries are identified by id and don't
+    // have an existing "container" field to replace wholesale.
+    educationAdd: z.array(profileDocSchema.shape.education.element),
+    educationRemove: z.array(z.string().min(1)),
   })
   .partial()
   .refine(
     (body) =>
       (body.personal && Object.keys(body.personal).length > 0) ||
       (body.education && body.education.length > 0) ||
-      (body.bullets && body.bullets.length > 0),
+      (body.bullets && body.bullets.length > 0) ||
+      (body.bulletTags && body.bulletTags.length > 0) ||
+      (body.educationAdd && body.educationAdd.length > 0) ||
+      (body.educationRemove && body.educationRemove.length > 0),
     { message: "Request must include at least one change." },
   );
 
@@ -107,17 +135,29 @@ export const positioningDocSchema = z.object({
 
 // Targeted-edit request body for PATCH /api/admin/update-positioning — updates
 // one PositioningDoc by _id. Field types mirror positioningDocSchema's own
-// shapes so the two stay in sync.
+// shapes so the two stay in sync. `bulletSelection` (added alongside the
+// field-by-field editor's per-role "add bullet from profile" / "remove
+// bullet" controls) is a full-object replace, same pattern as
+// `skillsOrder` — the caller sends the complete updated map, not a delta.
+// Restructuring `format`/`language`/`roleGroup`/`draftTranslation`, or
+// renaming `_id`, still isn't supported here — those go through the Seed
+// Positioning JSON tool's full-document replace.
 export const updatePositioningRequestSchema = z
   .object({
     positioningId: z.string().min(1),
     skillsOrder: positioningDocSchema.shape.skillsOrder.optional(),
     targetTitle: positioningDocSchema.shape.targetTitle.optional(),
     summary: positioningDocSchema.shape.summary.optional(),
+    bulletSelection: positioningDocSchema.shape.bulletSelection.optional(),
   })
-  .refine((body) => body.skillsOrder !== undefined || body.targetTitle !== undefined || body.summary !== undefined, {
-    message: "Request must include at least one change.",
-  });
+  .refine(
+    (body) =>
+      body.skillsOrder !== undefined ||
+      body.targetTitle !== undefined ||
+      body.summary !== undefined ||
+      body.bulletSelection !== undefined,
+    { message: "Request must include at least one change." },
+  );
 
 // Matches lib/cv-data.ts's CvData — the assembled shape sent to POST /api/export-pdf.
 export const cvDataSchema = z.object({

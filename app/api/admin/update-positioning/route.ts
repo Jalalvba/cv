@@ -18,9 +18,9 @@ export async function PATCH(request: NextRequest) {
   if (!parsed.success) {
     return zodErrorResponse(parsed);
   }
-  const { positioningId, skillsOrder, targetTitle, summary } = parsed.data;
+  const { positioningId, skillsOrder, targetTitle, summary, bulletSelection } = parsed.data;
 
-  const setFields: Partial<Pick<PositioningDoc, "skillsOrder" | "targetTitle" | "summary">> = {};
+  const setFields: Partial<Pick<PositioningDoc, "skillsOrder" | "targetTitle" | "summary" | "bulletSelection">> = {};
   const saved: string[] = [];
   if (skillsOrder !== undefined) {
     setFields.skillsOrder = skillsOrder;
@@ -33,6 +33,10 @@ export async function PATCH(request: NextRequest) {
   if (summary !== undefined) {
     setFields.summary = summary;
     saved.push("summary");
+  }
+  if (bulletSelection !== undefined) {
+    setFields.bulletSelection = bulletSelection;
+    saved.push("bulletSelection");
   }
 
   const db = await getDb();
