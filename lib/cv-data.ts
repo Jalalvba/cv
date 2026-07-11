@@ -10,7 +10,15 @@ export interface ProfileDoc {
     name: string;
     email: string;
     phone: string;
-    location: string;
+    location: string; // display string used on the CV's contact line, e.g. "Casablanca, Morocco" — unrelated to `address` below
+    address?: {
+      // structured, separate from `location` — for application forms that need broken-out
+      // fields; never read by the CV's own rendering (CVDocument.tsx / CVPreview.tsx)
+      street?: string;
+      postalCode?: string;
+      city?: string;
+      country?: string;
+    };
     website?: string;
     languages: { lang: string; level: string }[];
   };

@@ -34,9 +34,16 @@ import { diffProfile, diffPositioning } from "./diff";
 
 type PersonalField = "name" | "email" | "phone" | "location" | "website";
 type EducationField = "degree" | "school" | "endDate" | "honors";
+type AddressField = "street" | "postalCode" | "city" | "country";
 
 const PERSONAL_FIELDS: PersonalField[] = ["name", "email", "phone", "location", "website"];
 const EDUCATION_FIELDS: EducationField[] = ["degree", "school", "endDate", "honors"];
+const ADDRESS_FIELDS: { field: AddressField; label: string }[] = [
+  { field: "street", label: "Street Address" },
+  { field: "postalCode", label: "Postal Code" },
+  { field: "city", label: "City" },
+  { field: "country", label: "Country" },
+];
 
 function newId(prefix: string): string {
   const random = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36);
@@ -165,6 +172,11 @@ export default function EditPositioningPage() {
   function removeLanguage(index: number) {
     setProfile((prev) =>
       prev ? { ...prev, personal: { ...prev.personal, languages: prev.personal.languages.filter((_, i) => i !== index) } } : prev,
+    );
+  }
+  function updateAddress(field: AddressField, value: string) {
+    setProfile((prev) =>
+      prev ? { ...prev, personal: { ...prev.personal, address: { ...prev.personal.address, [field]: value } } } : prev,
     );
   }
 
@@ -556,6 +568,24 @@ export default function EditPositioningPage() {
                   />
                 </label>
               ))}
+            </div>
+
+            <div className="mt-4">
+              <span className="text-xs font-medium text-neutral-700">
+                Address <span className="font-normal text-neutral-400">(for application forms — not shown on the CV)</span>
+              </span>
+              <div className="mt-2 grid grid-cols-2 gap-4">
+                {ADDRESS_FIELDS.map(({ field, label }) => (
+                  <label key={field} className="flex flex-col gap-1 text-xs">
+                    <span className="font-medium text-neutral-700">{label}</span>
+                    <input
+                      value={profile.personal.address?.[field] ?? ""}
+                      onChange={(e) => updateAddress(field, e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div className="mt-4">

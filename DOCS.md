@@ -108,7 +108,13 @@ interface ProfileDoc {
     name: string;
     email: string;
     phone: string;
-    location: string;
+    location: string;        // display string used on the CV's contact line, e.g. "Casablanca, Morocco" — unrelated to `address` below
+    address?: {               // structured, separate from `location` — for application forms needing broken-out fields;
+      street?: string;        // never read by the CV's own rendering (CVDocument.tsx / CVPreview.tsx / assemble.ts's `contact`)
+      postalCode?: string;
+      city?: string;
+      country?: string;
+    };
     website?: string;        // bare domain or full URL, e.g. "chafiqjalal.com" — lenient zod validation, see lib/validation.ts
     languages: { lang: string; level: string }[];
   };
@@ -204,9 +210,9 @@ There is no token-based auth anywhere in this codebase anymore (an earlier `ADMI
 
 ### 8.3 Admin editor (`/admin/edit/[positioningId]`)
 
-Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and pre-fills a single JSON textarea with `{ profile: ProfileDoc, positioning: PositioningDoc }` — the real, current documents, not a template. There is no per-field UI (no individual inputs for name/email/education/bullets/skills); the intended workflow is generating replacement JSON externally via an AI assistant (using the downloadable context prompt from §8.4) and pasting it back in.
+Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and renders a structured, field-by-field form — individual inputs for name/email/phone/location/address/website/languages, education entries (with add/remove), each role's bullet selection (add from profile / remove / reorder via `bulletSelection`), and skills (add/remove/reorder). This replaced an earlier raw-JSON-textarea editor; generating positioning JSON externally via an AI assistant is still supported, just via the downloadable context prompt on §8.4 rather than a paste-into-this-page workflow.
 
-"Save changes" parses the textarea, validates the two halves against `profileDocSchema`/`positioningDocSchema` (the same full-document schemas `seed-positioning` uses — see `lib/validation.ts`), and on success diffs each against the last-loaded snapshot (`app/admin/edit/[positioningId]/diff.ts`'s `diffProfile`/`diffPositioning`). Only the fields `PATCH /api/admin/update-profile` and `/api/admin/update-positioning` actually support — personal info minus `languages`, education minus `tags`, bullet `text`/`textFr`, and `skillsOrder`/`targetTitle`/`summary` respectively — get sent; everything else that changed (`tags`, `personal.languages`, `bulletSelection`, `format`, `language`, `roleGroup`, adding/removing/reordering education/experience/bullets) is reported back as "not saved" rather than silently dropped. Restructuring those fields still goes through §8.4's full-document replace. Changing `positioning._id` is rejected outright (renaming isn't supported by `update-positioning`). "Preview PDF" / "Export & Download" work the same as Home's export, plus there's a "Seed Positionings" link to §8.4 and a "Logout" button.
+"Save changes" diffs the edited `profile`/`positioning` against the last-loaded snapshot (`app/admin/edit/[positioningId]/diff.ts`'s `diffProfile`/`diffPositioning`) and sends only what changed to `PATCH /api/admin/update-profile` / `/api/admin/update-positioning`, validated there against `updateProfileRequestSchema`/`updatePositioningRequestSchema` (see `lib/validation.ts`). Everything the form exposes round-trips this way — including `personal.address`, `personal.languages`, education/bullet `tags`, and structural add/remove of whole education entries or bullet selections. What's still genuinely out of scope for a targeted PATCH (adding/removing a whole experience/role entry, a role's title/company/location/dates, authoring a brand-new bullet's text, or restructuring a positioning's `_id`/`roleGroup`/`format`/`language`/`draftTranslation`) is reported back as "not saved" rather than silently dropped, and still goes through §8.4's full-document replace. "Preview PDF" / "Export & Download" work the same as Home's export, plus there's a "Seed Positionings" link to §8.4 and a "Logout" button.
 
 ### 8.4 Bulk seed tool (`/admin/positionings`)
 

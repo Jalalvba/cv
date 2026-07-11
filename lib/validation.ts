@@ -27,6 +27,14 @@ export const profileDocSchema = z.object({
     email: z.string(),
     phone: z.string(),
     location: z.string(),
+    address: z
+      .object({
+        street: z.string().optional(),
+        postalCode: z.string().optional(),
+        city: z.string().optional(),
+        country: z.string().optional(),
+      })
+      .optional(),
     website: websiteSchema,
     languages: z.array(z.object({ lang: z.string(), level: z.string() })),
   }),

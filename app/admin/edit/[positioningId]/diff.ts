@@ -54,6 +54,9 @@ export function diffProfile(original: ProfileDoc, edited: ProfileDoc): { patch: 
   if (JSON.stringify(original.personal.languages) !== JSON.stringify(edited.personal.languages)) {
     personalPatch.languages = edited.personal.languages;
   }
+  if (JSON.stringify(original.personal.address ?? {}) !== JSON.stringify(edited.personal.address ?? {})) {
+    personalPatch.address = edited.personal.address;
+  }
   if (Object.keys(personalPatch).length > 0) patch.personal = personalPatch;
 
   const educationPatch: NonNullable<UpdateProfileBody["education"]> = [];
