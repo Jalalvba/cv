@@ -13,12 +13,14 @@ export interface ProfileDoc {
     location: string; // display string used on the CV's contact line, e.g. "Casablanca, Morocco" — unrelated to `address` below
     address?: {
       // structured, separate from `location` — for application forms that need broken-out
-      // fields; never read by the CV's own rendering (CVDocument.tsx / CVPreview.tsx)
+      // fields. Also folded into a single formatted line on the CV itself (assemble()'s
+      // contact.address), alongside `location` — the two aren't deduplicated.
       street?: string;
       postalCode?: string;
       city?: string;
       country?: string;
     };
+    dateOfBirth?: string; // "YYYY-MM-DD" — age is computed from this at assemble() time (lib/assemble.ts), never stored as a static number, so it's never stale
     website?: string;
     languages: { lang: string; level: string }[];
   };
@@ -74,7 +76,14 @@ export interface CvData {
   photoUrl: string;
   name: string;
   title: string; // = positioning.targetTitle
-  contact: { email: string; phone: string; location: string; website?: string };
+  contact: {
+    email: string;
+    phone: string;
+    location: string;
+    address?: string; // formatted single line from personal.address, e.g. "Lot 56, Bd Moulay Ismail, Les Roches Noires, 20290 Casablanca, Morocco"
+    age?: number; // computed from personal.dateOfBirth at assemble() time
+    website?: string;
+  };
   summary: string; // = positioning.summary
   experience: {
     id: string;

@@ -201,4 +201,44 @@ function positioningWith(bulletSelection: PositioningDoc["bulletSelection"]): Po
   assert.equal(warnings.length, 0);
 }
 
+// (j) contact.age is computed from personal.dateOfBirth, undefined when absent
+{
+  const result = assemble(profile, positioningWith({}));
+  assert.equal(result.contact.age, undefined);
+
+  const today = new Date();
+  const bornExactlyNYearsAgoToday = new Date(Date.UTC(today.getUTCFullYear() - 40, today.getUTCMonth(), today.getUTCDate()));
+  const dob = bornExactlyNYearsAgoToday.toISOString().slice(0, 10);
+  const profileWithDob: ProfileDoc = { ...profile, personal: { ...profile.personal, dateOfBirth: dob } };
+  const resultWithDob = assemble(profileWithDob, positioningWith({}));
+  assert.equal(resultWithDob.contact.age, 40);
+
+  // Birthday is tomorrow: hasn't happened yet this year, so age is one less.
+  const tomorrow = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1));
+  const notYetBirthdayDob = new Date(Date.UTC(tomorrow.getUTCFullYear() - 40, tomorrow.getUTCMonth(), tomorrow.getUTCDate()))
+    .toISOString()
+    .slice(0, 10);
+  const profileNotYetBirthday: ProfileDoc = { ...profile, personal: { ...profile.personal, dateOfBirth: notYetBirthdayDob } };
+  assert.equal(assemble(profileNotYetBirthday, positioningWith({})).contact.age, 39);
+}
+
+// (k) contact.address is a single formatted line from personal.address, undefined when absent/empty
+{
+  const result = assemble(profile, positioningWith({}));
+  assert.equal(result.contact.address, undefined);
+
+  const profileWithAddress: ProfileDoc = {
+    ...profile,
+    personal: {
+      ...profile.personal,
+      address: { street: "Lot 56, Bd Moulay Ismail", postalCode: "20290", city: "Casablanca", country: "Morocco" },
+    },
+  };
+  const resultWithAddress = assemble(profileWithAddress, positioningWith({}));
+  assert.equal(resultWithAddress.contact.address, "Lot 56, Bd Moulay Ismail, 20290 Casablanca, Morocco");
+
+  const profileWithEmptyAddress: ProfileDoc = { ...profile, personal: { ...profile.personal, address: {} } };
+  assert.equal(assemble(profileWithEmptyAddress, positioningWith({})).contact.address, undefined);
+}
+
 console.log("assemble.test.ts: all assertions passed");

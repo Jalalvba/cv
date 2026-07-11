@@ -215,7 +215,14 @@ export function CVDocument({ data, photoSrc, scale = 1 }: CVDocumentProps) {
             <Text style={styles.name}>{data.name.toUpperCase()}</Text>
             {data.title ? <Text style={styles.title}>{data.title}</Text> : null}
             <Text style={styles.contact}>
-              {[data.contact.email, data.contact.phone, data.contact.location, data.contact.website]
+              {[
+                data.contact.email,
+                data.contact.phone,
+                data.contact.location,
+                data.contact.address,
+                data.contact.age !== undefined ? `${data.contact.age} years` : undefined,
+                data.contact.website,
+              ]
                 .filter(Boolean)
                 .join(INLINE_SEPARATOR)}
             </Text>

@@ -29,7 +29,7 @@ export type UpdatePositioningPatch = Partial<
   Pick<z.infer<typeof updatePositioningRequestSchema>, "skillsOrder" | "targetTitle" | "summary" | "bulletSelection">
 >;
 
-const PERSONAL_PATCH_FIELDS = ["name", "email", "phone", "location", "website"] as const;
+const PERSONAL_PATCH_FIELDS = ["name", "email", "phone", "location", "website", "dateOfBirth"] as const;
 const EDUCATION_PATCH_FIELDS = ["degree", "school", "endDate", "honors", "description", "descriptionFr"] as const;
 
 /**

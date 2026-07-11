@@ -32,7 +32,7 @@ import { AdminLoginForm } from "@/components/AdminLoginForm";
 import { ZodIssuesList } from "@/components/ZodIssuesList";
 import { diffProfile, diffPositioning } from "./diff";
 
-type PersonalField = "name" | "email" | "phone" | "location" | "website";
+type PersonalField = "name" | "email" | "phone" | "location" | "website" | "dateOfBirth";
 type EducationField = "degree" | "school" | "endDate" | "honors";
 type AddressField = "street" | "postalCode" | "city" | "country";
 
@@ -572,7 +572,7 @@ export default function EditPositioningPage() {
 
             <div className="mt-4">
               <span className="text-xs font-medium text-neutral-700">
-                Address <span className="font-normal text-neutral-400">(for application forms — not shown on the CV)</span>
+                Address <span className="font-normal text-neutral-400">(shown on the CV, alongside Location)</span>
               </span>
               <div className="mt-2 grid grid-cols-2 gap-4">
                 {ADDRESS_FIELDS.map(({ field, label }) => (
@@ -586,6 +586,20 @@ export default function EditPositioningPage() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="flex max-w-[calc(50%-0.5rem)] flex-col gap-1 text-xs">
+                <span className="font-medium text-neutral-700">
+                  Date of birth <span className="font-normal text-neutral-400">(age is shown on the CV, computed automatically)</span>
+                </span>
+                <input
+                  type="date"
+                  value={profile.personal.dateOfBirth ?? ""}
+                  onChange={(e) => updatePersonal("dateOfBirth", e.target.value)}
+                  className={inputClass}
+                />
+              </label>
             </div>
 
             <div className="mt-4">

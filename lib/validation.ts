@@ -20,6 +20,14 @@ const websiteSchema = z
   })
   .optional();
 
+const dateOfBirthSchema = z
+  .string()
+  .trim()
+  .refine((val) => val.length === 0 || /^\d{4}-\d{2}-\d{2}$/.test(val), {
+    message: 'Date of birth must be in "YYYY-MM-DD" format, e.g. "1990-07-05".',
+  })
+  .optional();
+
 export const profileDocSchema = z.object({
   _id: z.literal("jalal_chafiq"),
   personal: z.object({
@@ -35,6 +43,7 @@ export const profileDocSchema = z.object({
         country: z.string().optional(),
       })
       .optional(),
+    dateOfBirth: dateOfBirthSchema,
     website: websiteSchema,
     languages: z.array(z.object({ lang: z.string(), level: z.string() })),
   }),
@@ -176,6 +185,8 @@ export const cvDataSchema = z.object({
     email: z.string(),
     phone: z.string(),
     location: z.string(),
+    address: z.string().optional(),
+    age: z.number().optional(),
     website: websiteSchema,
   }),
   summary: z.string(),

@@ -109,12 +109,13 @@ interface ProfileDoc {
     email: string;
     phone: string;
     location: string;        // display string used on the CV's contact line, e.g. "Casablanca, Morocco" — unrelated to `address` below
-    address?: {               // structured, separate from `location` — for application forms needing broken-out fields;
-      street?: string;        // never read by the CV's own rendering (CVDocument.tsx / CVPreview.tsx / assemble.ts's `contact`)
+    address?: {               // structured, separate from `location`; also folded into one formatted line on the CV itself
+      street?: string;        // (assemble()'s contact.address, alongside — not deduplicated with — location)
       postalCode?: string;
       city?: string;
       country?: string;
     };
+    dateOfBirth?: string;     // "YYYY-MM-DD" — age is computed fresh from this at assemble() time, never stored as a static number
     website?: string;        // bare domain or full URL, e.g. "chafiqjalal.com" — lenient zod validation, see lib/validation.ts
     languages: { lang: string; level: string }[];
   };
@@ -176,7 +177,8 @@ interface CvData {
   photoUrl: string;
   name: string;
   title: string;              // = positioning.targetTitle
-  contact: { email: string; phone: string; location: string; website?: string };
+  contact: { email: string; phone: string; location: string; address?: string; age?: number; website?: string };
+  // address = formatted single line from personal.address; age = computed from personal.dateOfBirth — both undefined if the source field is unset
   summary: string;            // = positioning.summary
   experience: {
     id: string; title: string; company: string; dates: string;
@@ -188,7 +190,7 @@ interface CvData {
 }
 ```
 
-`assemble(profile, positioning)`: for each `experience` entry, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets. For each selected bullet, resolve `text` or `textFr` by `positioning.language` — an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** (degrades gracefully, never silent). `education[].description` resolves the same way via `descriptionFr`. Produced by `GET /api/cv/[positioningId]`, consumed by both `CVPreview.tsx` (Home) and `CVDocument.tsx` (PDF export).
+`assemble(profile, positioning)`: for each `experience` entry, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets. For each selected bullet, resolve `text` or `textFr` by `positioning.language` — an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** (degrades gracefully, never silent). `education[].description` resolves the same way via `descriptionFr`. `contact.age` is computed from `personal.dateOfBirth` fresh on every call (never cached/stored, so it can't go stale), and `contact.address` is a single formatted line from `personal.address` — both are `undefined` when the source field is unset. `CVDocument.tsx`/`CVPreview.tsx` join `contact.address` and `contact.age` (as `"{n} years"`) into the CV's contact line alongside `email`/`phone`/`location`/`website` — the two components' join logic must stay in sync (see §6). Produced by `GET /api/cv/[positioningId]`, consumed by both `CVPreview.tsx` (Home) and `CVDocument.tsx` (PDF export).
 
 ## 8. Architecture: public Home vs. gated admin
 
@@ -210,7 +212,7 @@ There is no token-based auth anywhere in this codebase anymore (an earlier `ADMI
 
 ### 8.3 Admin editor (`/admin/edit/[positioningId]`)
 
-Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and renders a structured, field-by-field form — individual inputs for name/email/phone/location/address/website/languages, education entries (with add/remove), each role's bullet selection (add from profile / remove / reorder via `bulletSelection`), and skills (add/remove/reorder). This replaced an earlier raw-JSON-textarea editor; generating positioning JSON externally via an AI assistant is still supported, just via the downloadable context prompt on §8.4 rather than a paste-into-this-page workflow.
+Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and renders a structured, field-by-field form — individual inputs for name/email/phone/location/address/dateOfBirth/website/languages, education entries (with add/remove), each role's bullet selection (add from profile / remove / reorder via `bulletSelection`), and skills (add/remove/reorder). This replaced an earlier raw-JSON-textarea editor; generating positioning JSON externally via an AI assistant is still supported, just via the downloadable context prompt on §8.4 rather than a paste-into-this-page workflow.
 
 "Save changes" diffs the edited `profile`/`positioning` against the last-loaded snapshot (`app/admin/edit/[positioningId]/diff.ts`'s `diffProfile`/`diffPositioning`) and sends only what changed to `PATCH /api/admin/update-profile` / `/api/admin/update-positioning`, validated there against `updateProfileRequestSchema`/`updatePositioningRequestSchema` (see `lib/validation.ts`). Everything the form exposes round-trips this way — including `personal.address`, `personal.languages`, education/bullet `tags`, and structural add/remove of whole education entries or bullet selections. What's still genuinely out of scope for a targeted PATCH (adding/removing a whole experience/role entry, a role's title/company/location/dates, authoring a brand-new bullet's text, or restructuring a positioning's `_id`/`roleGroup`/`format`/`language`/`draftTranslation`) is reported back as "not saved" rather than silently dropped, and still goes through §8.4's full-document replace. "Preview PDF" / "Export & Download" work the same as Home's export, plus there's a "Seed Positionings" link to §8.4 and a "Logout" button.
 

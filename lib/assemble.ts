@@ -30,6 +30,24 @@ function formatDateRange(startDate: string, endDate: string | null): string {
   return `${formatMonthYear(startDate)} - ${endDate ? formatMonthYear(endDate) : "Present"}`;
 }
 
+// Computed fresh on every assemble() call (not stored) so it's never stale —
+// `today` is a parameter only so tests can pin it.
+function computeAge(dateOfBirthIso: string, today: Date = new Date()): number {
+  const dob = new Date(`${dateOfBirthIso}T00:00:00Z`);
+  let age = today.getUTCFullYear() - dob.getUTCFullYear();
+  const hadBirthdayThisYear =
+    today.getUTCMonth() > dob.getUTCMonth() ||
+    (today.getUTCMonth() === dob.getUTCMonth() && today.getUTCDate() >= dob.getUTCDate());
+  if (!hadBirthdayThisYear) age -= 1;
+  return age;
+}
+
+function formatAddress(address: NonNullable<ProfileDoc["personal"]["address"]>): string | undefined {
+  const cityLine = [address.postalCode, address.city].filter(Boolean).join(" ");
+  const parts = [address.street, cityLine, address.country].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : undefined;
+}
+
 type Bullet = ProfileDoc["experience"][number]["bullets"][number];
 type EducationEntry = ProfileDoc["education"][number];
 
@@ -62,6 +80,8 @@ export function assemble(profile: ProfileDoc, positioning: PositioningDoc): CvDa
       email: profile.personal.email,
       phone: profile.personal.phone,
       location: profile.personal.location,
+      address: profile.personal.address ? formatAddress(profile.personal.address) : undefined,
+      age: profile.personal.dateOfBirth ? computeAge(profile.personal.dateOfBirth) : undefined,
       website: profile.personal.website,
     },
     summary: positioning.summary,

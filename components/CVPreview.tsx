@@ -26,7 +26,14 @@ export function CVPreview({ data }: { data: CvData }) {
           <p className="text-[22pt] font-bold text-cv-navy">{data.name.toUpperCase()}</p>
           {data.title ? <p className="mt-1 text-[12.5pt] text-cv-amber">{data.title}</p> : null}
           <p className="mt-1 text-[9.5pt] text-cv-grey-dark">
-            {[data.contact.email, data.contact.phone, data.contact.location, data.contact.website]
+            {[
+              data.contact.email,
+              data.contact.phone,
+              data.contact.location,
+              data.contact.address,
+              data.contact.age !== undefined ? `${data.contact.age} years` : undefined,
+              data.contact.website,
+            ]
               .filter(Boolean)
               .join("  |  ")}
           </p>
