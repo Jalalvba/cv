@@ -22,8 +22,9 @@ const profile: ProfileDoc = {
     phone: "+212 674 664 173",
     location: "Casablanca, Morocco",
     address: {
-      // street/postalCode intentionally left unset — fill in via the admin
-      // editor's Personal > Address fields once known; never fabricate these.
+      // street/postalCode intentionally omitted here — this file is committed
+      // to a public repo. The real values live only in MongoDB (set via the
+      // admin editor's Personal > Address fields), never in source control.
       city: "Casablanca",
       country: "Morocco",
     },
