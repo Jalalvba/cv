@@ -1,17 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import { POSITIONING_DOC_SHAPE, PROFILE_DOC_SHAPE, EXAMPLE_POSITIONING_ID } from "@/lib/schema-templates";
+import { ZodIssuesList } from "@/components/ZodIssuesList";
+import type { ZodIssueLike } from "@/lib/zod-issues";
 
 interface SeedResult {
   created: string[];
   updated: string[];
 }
 
-interface Issue {
-  path: string;
-  message: string;
+/**
+ * Fetches a real document from a public GET endpoint and renders it as
+ * pretty-printed JSON text, so the "example" half of the schema template
+ * below is always the actual current data — never a hand-copied snapshot
+ * that can drift out of sync with what's really in MongoDB.
+ */
+function useLiveJsonExample(url: string): string {
+  const [text, setText] = useState("Loading example…");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`(${res.status})`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) setText(JSON.stringify(data, null, 2));
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setText(`// Could not load a live example from ${url}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  return text;
 }
 
 export default function AdminPositioningsPage() {
@@ -21,7 +51,10 @@ export default function AdminPositioningsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SeedResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [issues, setIssues] = useState<Issue[]>([]);
+  const [issues, setIssues] = useState<ZodIssueLike[]>([]);
+
+  const profileExample = useLiveJsonExample("/api/profile");
+  const positioningExample = useLiveJsonExample(`/api/admin/positioning/${EXAMPLE_POSITIONING_ID}`);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,6 +89,50 @@ export default function AdminPositioningsPage() {
       {!isLoggedIn ? (
         <p className="mt-4 text-xs text-neutral-500">Read-only — log in as Admin (top nav) to seed positionings.</p>
       ) : null}
+
+      <details className="mt-8 rounded border border-neutral-200 bg-neutral-50 open:pb-4">
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-neutral-800">
+          Show target JSON schema
+        </summary>
+        <div className="flex flex-col gap-6 border-t border-neutral-200 px-4 pt-4">
+          <p className="text-xs text-neutral-500">
+            Hand one of these blocks (shape + a real, current example) to an external AI assistant — e.g. &quot;generate a
+            PositioningDoc for a Fleet Operations Coordinator role, in English, matching this shape and example&quot; —
+            then paste the result into the textarea below. Each block is a single <code>&lt;pre&gt;</code>: click inside
+            and Ctrl/Cmd+A to select the whole thing.
+          </p>
+
+          <div>
+            <h3 className="text-xs font-semibold text-neutral-700">PositioningDoc — shape</h3>
+            <pre className="mt-1 max-h-80 overflow-auto rounded border border-neutral-300 bg-white p-3 text-[11px] leading-snug text-neutral-800">
+              {POSITIONING_DOC_SHAPE}
+            </pre>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-semibold text-neutral-700">
+              PositioningDoc — example (live: {EXAMPLE_POSITIONING_ID})
+            </h3>
+            <pre className="mt-1 max-h-80 overflow-auto rounded border border-neutral-300 bg-white p-3 text-[11px] leading-snug text-neutral-800">
+              {positioningExample}
+            </pre>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-semibold text-neutral-700">ProfileDoc — shape</h3>
+            <pre className="mt-1 max-h-80 overflow-auto rounded border border-neutral-300 bg-white p-3 text-[11px] leading-snug text-neutral-800">
+              {PROFILE_DOC_SHAPE}
+            </pre>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-semibold text-neutral-700">ProfileDoc — example (live: jalal_chafiq)</h3>
+            <pre className="mt-1 max-h-80 overflow-auto rounded border border-neutral-300 bg-white p-3 text-[11px] leading-snug text-neutral-800">
+              {profileExample}
+            </pre>
+          </div>
+        </div>
+      </details>
 
       <section className="mt-8 border-t border-neutral-200 pt-6">
         <h2 className="text-sm font-semibold text-neutral-800">Review &amp; seed to MongoDB</h2>
@@ -110,15 +187,7 @@ export default function AdminPositioningsPage() {
         {error ? (
           <div className="mt-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-800">
             <p>{error}</p>
-            {issues.length > 0 ? (
-              <ul className="mt-2 list-disc pl-4">
-                {issues.map((issue, i) => (
-                  <li key={i}>
-                    <code>{issue.path || "(root)"}</code>: {issue.message}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <ZodIssuesList issues={issues} />
           </div>
         ) : null}
       </section>

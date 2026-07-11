@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { ZodSafeParseError } from "zod";
+import { zodIssues } from "@/lib/zod-issues";
 
 /**
  * Shared request-handling helpers for the /api/* route handlers — consolidates
@@ -53,7 +54,7 @@ export async function parseJsonBody<T>(
  * update-positioning behavior.
  */
 export function zodErrorResponse<T>(result: ZodSafeParseError<T>, opts?: { prefix?: string }): NextResponse {
-  const issues = result.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+  const issues = zodIssues(result.error);
   const first = issues[0];
   const error = opts?.prefix
     ? `${opts.prefix}: ${first?.path || "(root)"} — ${first?.message}`
