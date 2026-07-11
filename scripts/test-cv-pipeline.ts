@@ -8,16 +8,18 @@
 import { getDb } from "../lib/db";
 import { assemble } from "../lib/assemble";
 import { cvDataSchema } from "../lib/validation";
-import type { ProfileDoc, PositioningDoc } from "../lib/cv-data";
+import { getProfile, PROFILE_ID } from "../lib/profile";
+import type { PositioningDoc } from "../lib/cv-data";
 
 async function main() {
   console.log("=== MongoDB -> CV pipeline verification ===");
 
   const db = await getDb();
-  const profile = await db.collection<ProfileDoc>("profile").findOne({ _id: "jalal_chafiq" });
-
-  if (!profile) {
-    console.log("FAIL: no profile document found (_id: \"jalal_chafiq\")");
+  let profile;
+  try {
+    profile = await getProfile(db);
+  } catch {
+    console.log(`FAIL: no profile document found (_id: "${PROFILE_ID}")`);
     process.exitCode = 1;
     return;
   }

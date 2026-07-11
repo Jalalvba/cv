@@ -3,37 +3,32 @@ import type { UpdateFilter } from "mongodb";
 import { getDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/admin-auth";
 import { updateProfileRequestSchema } from "@/lib/validation";
+import { parseJsonBody, zodErrorResponse, errorMessage } from "@/lib/api-errors";
+import { getProfile, PROFILE_ID } from "@/lib/profile";
 import type { ProfileDoc } from "@/lib/cv-data";
 
 export const runtime = "nodejs";
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export async function PATCH(request: NextRequest) {
   const authError = await requireAdminSession();
   if (authError) return authError;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch (err) {
-    return NextResponse.json({ error: `Invalid JSON: ${errorMessage(err)}` }, { status: 400 });
-  }
+  const parsedBody = await parseJsonBody<unknown>(request);
+  if (!parsedBody.ok) return parsedBody.response;
 
-  const parsed = updateProfileRequestSchema.safeParse(body);
+  const parsed = updateProfileRequestSchema.safeParse(parsedBody.data);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
-    return NextResponse.json({ error: issues[0]?.message ?? "Validation failed", issues }, { status: 400 });
+    return zodErrorResponse(parsed);
   }
   const { personal, education, bullets } = parsed.data;
 
   const db = await getDb();
   const collection = db.collection<ProfileDoc>("profile");
-  const profile = await collection.findOne({ _id: "jalal_chafiq" });
-  if (!profile) {
-    return NextResponse.json({ error: 'Profile document not found (_id: "jalal_chafiq").' }, { status: 404 });
+  let profile: ProfileDoc;
+  try {
+    profile = await getProfile(db);
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 404 });
   }
 
   // Validate every referenced id exists before writing anything, so a bad id
@@ -63,7 +58,7 @@ export async function PATCH(request: NextRequest) {
       setFields[`personal.${field}`] = value;
       saved.push(`personal.${field}`);
     }
-    await collection.updateOne({ _id: "jalal_chafiq" }, { $set: setFields });
+    await collection.updateOne({ _id: PROFILE_ID }, { $set: setFields });
   }
 
   for (const edu of education ?? []) {
@@ -79,7 +74,7 @@ export async function PATCH(request: NextRequest) {
     // so this single update boundary is cast — same pattern as the
     // renderToBuffer() cast in app/api/export-pdf/route.ts.
     await collection.updateOne(
-      { _id: "jalal_chafiq" },
+      { _id: PROFILE_ID },
       { $set: setFields } as UpdateFilter<ProfileDoc>,
       { arrayFilters: [{ "edu.id": id }] },
     );
@@ -88,7 +83,7 @@ export async function PATCH(request: NextRequest) {
   for (const b of bullets ?? []) {
     const field = b.field ?? "text";
     await collection.updateOne(
-      { _id: "jalal_chafiq" },
+      { _id: PROFILE_ID },
       { $set: { [`experience.$[exp].bullets.$[bul].${field}`]: b.text } } as UpdateFilter<ProfileDoc>,
       { arrayFilters: [{ "exp.id": b.experienceId }, { "bul.id": b.bulletId }] },
     );
