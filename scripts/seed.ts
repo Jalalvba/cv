@@ -21,6 +21,7 @@ const profile: ProfileDoc = {
     email: "chafiq.jalal@gmail.com",
     phone: "+212 674 664 173",
     location: "Casablanca, Morocco",
+    website: "chafiqjalal.com",
     languages: [
       { lang: "Arabic", level: "native" },
       { lang: "French", level: "fluent" },
