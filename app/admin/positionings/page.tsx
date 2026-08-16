@@ -30,6 +30,44 @@ export default function AdminPositioningsPage() {
   const [downloadingPrompt, setDownloadingPrompt] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
+  const [jobOffer, setJobOffer] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generatedNote, setGeneratedNote] = useState<string | null>(null);
+
+  /**
+   * Live replacement for the download-prompt → external-chat → copy-JSON loop.
+   * The result is dropped into the review textarea below rather than seeded
+   * directly, so generated content is always read before it reaches MongoDB.
+   */
+  async function handleGenerate() {
+    setGenerating(true);
+    setGenerateError(null);
+    setGeneratedNote(null);
+    setIssues([]);
+    try {
+      const res = await fetch("/api/admin/generate-positioning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobOffer }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGenerateError(data.error ?? `Request failed (${res.status})`);
+        if (Array.isArray(data.issues)) setIssues(data.issues);
+        return;
+      }
+      setJsonText(JSON.stringify(data.positionings, null, 2));
+      setGeneratedNote(
+        `Generated with ${data.model} — review the JSON below, then seed it. Nothing has been written to MongoDB yet.`,
+      );
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   // Fetches everything fresh at click time so the downloaded file reflects
   // the current profile even if it changed since this page loaded.
   async function handleDownloadContextPrompt() {
@@ -101,6 +139,37 @@ export default function AdminPositioningsPage() {
       {!isLoggedIn ? (
         <p className="mt-4 text-xs text-neutral-500">Read-only — log in as Admin (top nav) to seed positionings.</p>
       ) : null}
+
+      <section className="mt-6 rounded border border-neutral-200 bg-neutral-50 px-4 py-3">
+        <h2 className="text-sm font-semibold text-neutral-800">Generate from a job offer</h2>
+        <p className="mt-1 text-xs text-neutral-500">
+          Paste a job offer and Gemini drafts the FR + EN pair directly, using the same context prompt as the
+          download below. The result lands in the review box at the bottom of this page — nothing is written to
+          MongoDB until you seed it yourself.
+        </p>
+        <label className="mt-3 flex flex-col gap-1">
+          <span className="text-xs font-medium text-neutral-700">Job offer text</span>
+          <textarea
+            value={jobOffer}
+            onChange={(e) => setJobOffer(e.target.value)}
+            rows={8}
+            spellCheck={false}
+            disabled={!isLoggedIn}
+            className="rounded border border-neutral-300 px-3 py-2 text-xs disabled:bg-neutral-100 disabled:text-neutral-500"
+            placeholder="Paste the full job offer here…"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={handleGenerate}
+          disabled={generating || !isLoggedIn || jobOffer.trim().length < 40}
+          className="mt-3 rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {generating ? "Generating…" : "Generate with Gemini"}
+        </button>
+        {generatedNote ? <p className="mt-2 text-xs text-green-700">{generatedNote}</p> : null}
+        {generateError ? <p className="mt-2 text-xs text-red-600">{generateError}</p> : null}
+      </section>
 
       <section className="mt-6 rounded border border-neutral-200 bg-neutral-50 px-4 py-3">
         <h2 className="text-sm font-semibold text-neutral-800">Draft a new positioning externally</h2>

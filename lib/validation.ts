@@ -176,6 +176,14 @@ export const updatePositioningRequestSchema = z
     { message: "Request must include at least one change." },
   );
 
+// Request body for POST /api/admin/generate-positioning — the job offer text
+// that replaces what used to be pasted into an external chat UI by hand. The
+// upper bound is a guard against sending a whole scraped page (and its token
+// cost) upstream; a real job offer is comfortably under it.
+export const generatePositioningRequestSchema = z.object({
+  jobOffer: z.string().trim().min(40, "Paste the job offer text (at least 40 characters).").max(20000),
+});
+
 // Matches lib/cv-data.ts's CvData — the assembled shape sent to POST /api/export-pdf.
 export const cvDataSchema = z.object({
   photoUrl: z.string(),
