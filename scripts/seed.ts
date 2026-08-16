@@ -273,7 +273,14 @@ const positionings: PositioningDoc[] = [
       exp_avis: ["avis_b1", "avis_b2", "avis_b3", "avis_b4"],
       exp_auto_hall: ["autohall_b1", "autohall_b2", "autohall_b3", "autohall_b4"],
       exp_sad_vw: ["sadvw_b1", "sadvw_b2", "sadvw_b3", "sadvw_b4"],
-      // exp_dekra intentionally omitted — falls back to all of DEKRA's bullets by default.
+      // exp_dekra is omitted here, which falls back to including ALL of DEKRA's
+      // bullets. NOTE: the live document in Atlas has since diverged from this
+      // baseline (edited via the admin editor) — it now sets exp_dekra
+      // explicitly and selects a different exp_avis set. Re-running `db:seed`
+      // would revert those edits. Selecting every role explicitly is now the
+      // documented expectation (see CONTEXT_PROMPT_RULES in lib/context-prompt.ts);
+      // this array is kept as the original historical baseline, not as a
+      // description of what's currently live.
     },
     format: "visual",
     language: "en",
@@ -356,7 +363,9 @@ const positionings: PositioningDoc[] = [
       exp_avis: ["avis_b1", "avis_b2", "avis_b3", "avis_b4"],
       exp_auto_hall: ["autohall_b1", "autohall_b2", "autohall_b3", "autohall_b4"],
       exp_sad_vw: ["sadvw_b1", "sadvw_b2", "sadvw_b3", "sadvw_b4"],
-      // exp_dekra intentionally omitted — falls back to all of DEKRA's bullets by default.
+      // exp_dekra omitted here too — see the note on "after_sales_manager_en" above:
+      // the live FR document has likewise diverged from this baseline and now sets
+      // exp_dekra explicitly.
     },
     format: "visual",
     language: "fr",

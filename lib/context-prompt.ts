@@ -83,6 +83,9 @@ export const EXAMPLE_POSITIONING_ID_EN = "after_sales_manager_en";
 
 export const CONTEXT_PROMPT_RULES = [
   "Use EXCLUSIVELY existing bullet ids from the profile provided below — never invent new bullet text.",
+  "SELECT, do not dump: choose only the 3-5 MOST RELEVANT bullets per role for this specific job offer. Never include every bullet a role has. A positioning is a targeted selection, not the full profile — including everything is a failure, not a safe default.",
+  "Rank each role's bullets against the offer's key requirements and keep the top 3-5: a bullet that directly matches a stated requirement (a named responsibility, tool, standard, metric, or scope in the offer) always beats a general or generic-strength bullet. If a role has more than 5 bullets that match, keep the 5 strongest and drop the rest.",
+  "Give EVERY experience id its own explicit bulletSelection key with its 3-5 chosen ids — including older/less relevant roles, which still get their 3 best. Do not omit a role's key: an omitted key silently falls back to including ALL of that role's bullets, which is exactly what this rule forbids.",
   'bulletSelection must be identical between the FR and EN variant of the same roleGroup — same ids, same order (only targetTitle/summary/skillsOrder are translated/adapted).',
   'format: "ats" for corporate/ATS-portal offers (large company, Workday/SuccessFactors-style portal), "visual" for a direct human contact.',
   "Flag any skill gap explicitly (in prose, outside the JSON) rather than inventing supporting experience for it.",
