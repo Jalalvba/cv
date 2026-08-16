@@ -3,249 +3,265 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import {
-  EXAMPLE_POSITIONING_ID,
-  EXAMPLE_POSITIONING_ID_EN,
-  buildContextPromptMarkdown,
-  contextPromptFilename,
-} from "@/lib/context-prompt";
+import { CVPreview } from "@/components/CVPreview";
 import { ZodIssuesList } from "@/components/ZodIssuesList";
+import { CostBadge } from "@/components/CostBadge";
+import type { CostInfo } from "@/lib/gemini-cost-tracker";
 import type { ZodIssueLike } from "@/lib/zod-issues";
-import type { ProfileDoc, PositioningDoc } from "@/lib/cv-data";
+import type { CvData, PositioningDoc } from "@/lib/cv-data";
+import { slugify } from "@/lib/utils";
+import { MODEL_TIERS, DEFAULT_TIER, type ModelTier } from "@/lib/geminiModels";
 
-interface SeedResult {
-  created: string[];
-  updated: string[];
-}
+type Language = "en" | "fr";
 
+/**
+ * Fully automatic job-offer → CV flow. Paste a job offer, Gemini drafts the
+ * FR/EN positioning pair, both are seeded to MongoDB immediately, and the
+ * resulting CV is fetched and shown right here for review/export. There is
+ * no manual JSON review step and no bulk paste-and-seed tool — this replaced
+ * that older two-step workflow (generate → hand-review JSON → seed).
+ */
 export default function AdminPositioningsPage() {
   const { isLoggedIn } = useAuth();
 
-  const [jsonText, setJsonText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<SeedResult | null>(null);
+  const [jobOffer, setJobOffer] = useState("");
+  const [modelTier, setModelTier] = useState<ModelTier>(DEFAULT_TIER);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<ZodIssueLike[]>([]);
+  // Comes back inline with the generation result, so it renders in the same
+  // round trip — no polling, no separate usage fetch.
+  const [costInfo, setCostInfo] = useState<CostInfo | null>(null);
 
-  const [downloadingPrompt, setDownloadingPrompt] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [positionings, setPositionings] = useState<PositioningDoc[] | null>(null);
+  const [language, setLanguage] = useState<Language>("en");
+  const [cvData, setCvData] = useState<CvData | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  const [jobOffer, setJobOffer] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
-  const [generatedNote, setGeneratedNote] = useState<string | null>(null);
+  const currentDoc = positionings?.find((p) => p.language === language) ?? null;
 
-  /**
-   * Live replacement for the download-prompt → external-chat → copy-JSON loop.
-   * The result is dropped into the review textarea below rather than seeded
-   * directly, so generated content is always read before it reaches MongoDB.
-   */
+  async function loadCv(positioningId: string) {
+    const res = await fetch(`/api/cv/${positioningId}`);
+    if (!res.ok) throw new Error(`Failed to load CV (${res.status})`);
+    setCvData((await res.json()) as CvData);
+  }
+
   async function handleGenerate() {
     setGenerating(true);
-    setGenerateError(null);
-    setGeneratedNote(null);
+    setError(null);
     setIssues([]);
+    setCostInfo(null);
+    setPositionings(null);
+    setCvData(null);
     try {
-      const res = await fetch("/api/admin/generate-positioning", {
+      const genRes = await fetch("/api/admin/generate-positioning", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobOffer }),
+        body: JSON.stringify({ jobOffer, modelTier }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setGenerateError(data.error ?? `Request failed (${res.status})`);
-        if (Array.isArray(data.issues)) setIssues(data.issues);
+      const genData = await genRes.json();
+      if (!genRes.ok) {
+        setError(genData.error ?? `Generation failed (${genRes.status})`);
+        if (Array.isArray(genData.issues)) setIssues(genData.issues);
+        if (genData.costInfo) setCostInfo(genData.costInfo);
         return;
       }
-      setJsonText(JSON.stringify(data.positionings, null, 2));
-      setGeneratedNote(
-        `Generated with ${data.model} — review the JSON below, then seed it. Nothing has been written to MongoDB yet.`,
-      );
+      setCostInfo(genData.costInfo ?? null);
+      const generated: PositioningDoc[] = genData.positionings;
+
+      // Seeded immediately — no manual JSON review step.
+      const seedRes = await fetch("/api/admin/seed-positioning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(generated),
+      });
+      const seedData = await seedRes.json();
+      if (!seedRes.ok) {
+        setError(seedData.error ?? `Saving the generated CV failed (${seedRes.status})`);
+        if (Array.isArray(seedData.issues)) setIssues(seedData.issues);
+        return;
+      }
+
+      setPositionings(generated);
+      const preferredLanguage: Language = generated.some((p) => p.language === "en") ? "en" : "fr";
+      setLanguage(preferredLanguage);
+      const preferredDoc = generated.find((p) => p.language === preferredLanguage) ?? generated[0];
+      await loadCv(preferredDoc._id);
     } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : "Request failed");
+      setError(err instanceof Error ? err.message : "Request failed");
     } finally {
       setGenerating(false);
     }
   }
 
-  // Fetches everything fresh at click time so the downloaded file reflects
-  // the current profile even if it changed since this page loaded.
-  async function handleDownloadContextPrompt() {
-    setDownloadingPrompt(true);
-    setDownloadError(null);
+  async function handleSelectLanguage(lang: Language) {
+    if (lang === language) return;
+    const doc = positionings?.find((p) => p.language === lang);
+    if (!doc) return;
+    setLanguage(lang);
     try {
-      const [profile, positioningFr, positioningEn] = await Promise.all([
-        fetch("/api/profile").then((res) => {
-          if (!res.ok) throw new Error(`Failed to fetch profile (${res.status})`);
-          return res.json() as Promise<ProfileDoc>;
-        }),
-        fetch(`/api/admin/positioning/${EXAMPLE_POSITIONING_ID}`).then((res) => {
-          if (!res.ok) throw new Error(`Failed to fetch example positioning (${res.status})`);
-          return res.json() as Promise<PositioningDoc>;
-        }),
-        fetch(`/api/admin/positioning/${EXAMPLE_POSITIONING_ID_EN}`).then((res) => {
-          if (!res.ok) throw new Error(`Failed to fetch example positioning (${res.status})`);
-          return res.json() as Promise<PositioningDoc>;
-        }),
-      ]);
+      await loadCv(doc._id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load CV");
+    }
+  }
 
-      const markdown = buildContextPromptMarkdown(profile, [positioningFr, positioningEn]);
-      const blob = new Blob([markdown], { type: "text/markdown" });
+  async function handleExport() {
+    if (!currentDoc) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const cvRes = await fetch(`/api/cv/${currentDoc._id}`);
+      if (!cvRes.ok) throw new Error(`Failed to load CV (${cvRes.status})`);
+      const freshData: CvData = await cvRes.json();
+
+      const exportRes = await fetch("/api/export-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(freshData),
+      });
+      if (!exportRes.ok) throw new Error(`PDF generation failed (${exportRes.status})`);
+      const blob = await exportRes.blob();
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = contextPromptFilename();
+      a.download = `${slugify(freshData.name)}-cv.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "Download failed");
+      setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {
-      setDownloadingPrompt(false);
-    }
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setResult(null);
-    setError(null);
-    setIssues([]);
-    try {
-      const res = await fetch("/api/admin/seed-positioning", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: jsonText,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? `Request failed (${res.status})`);
-        if (Array.isArray(data.issues)) setIssues(data.issues);
-        return;
-      }
-      setResult({ created: data.created ?? [], updated: data.updated ?? [] });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
-    } finally {
-      setSubmitting(false);
+      setExporting(false);
     }
   }
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
-      <h1 className="text-lg font-semibold text-neutral-800">Seed positioning JSON</h1>
+      <h1 className="text-lg font-semibold text-neutral-800">Generate a CV from a job offer</h1>
+      <p className="mt-1 text-xs text-neutral-500">
+        Paste a job offer below. Gemini drafts a matching FR/EN positioning pair, it&apos;s saved automatically, and
+        the resulting CV is shown here for you to review and export.
+      </p>
 
       {!isLoggedIn ? (
-        <p className="mt-4 text-xs text-neutral-500">Read-only — log in as Admin (top nav) to seed positionings.</p>
+        <p className="mt-4 text-xs text-neutral-500">Read-only — log in as Admin (top nav) to generate a CV.</p>
       ) : null}
 
-      <section className="mt-6 rounded border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-800">Generate from a job offer</h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          Paste a job offer and Gemini drafts the FR + EN pair directly, using the same context prompt as the
-          download below. The result lands in the review box at the bottom of this page — nothing is written to
-          MongoDB until you seed it yourself.
-        </p>
-        <label className="mt-3 flex flex-col gap-1">
-          <span className="text-xs font-medium text-neutral-700">Job offer text</span>
-          <textarea
-            value={jobOffer}
-            onChange={(e) => setJobOffer(e.target.value)}
-            rows={8}
-            spellCheck={false}
-            disabled={!isLoggedIn}
-            className="rounded border border-neutral-300 px-3 py-2 text-xs disabled:bg-neutral-100 disabled:text-neutral-500"
-            placeholder="Paste the full job offer here…"
-          />
-        </label>
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={generating || !isLoggedIn || jobOffer.trim().length < 40}
-          className="mt-3 rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
+      <label className="mt-6 flex flex-col gap-1">
+        <span className="text-xs font-medium text-neutral-700">Job offer text</span>
+        <textarea
+          value={jobOffer}
+          onChange={(e) => setJobOffer(e.target.value)}
+          rows={8}
+          spellCheck={false}
+          disabled={!isLoggedIn}
+          className="rounded border border-neutral-300 px-3 py-2 text-xs disabled:bg-neutral-100 disabled:text-neutral-500"
+          placeholder="Paste the full job offer here…"
+        />
+      </label>
+
+      <label className="mt-3 flex flex-col gap-1">
+        <span className="text-xs font-medium text-neutral-700">Model</span>
+        <select
+          value={modelTier}
+          onChange={(e) => setModelTier(e.target.value as ModelTier)}
+          disabled={!isLoggedIn}
+          aria-label="Gemini model tier"
+          className="w-fit rounded border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-800 disabled:bg-neutral-100 disabled:text-neutral-500"
         >
-          {generating ? "Generating…" : "Generate with Gemini"}
-        </button>
-        {generatedNote ? <p className="mt-2 text-xs text-green-700">{generatedNote}</p> : null}
-        {generateError ? <p className="mt-2 text-xs text-red-600">{generateError}</p> : null}
-      </section>
+          {MODEL_TIERS.map((t) => (
+            <option key={t.tier} value={t.tier}>
+              {t.label} — {t.description}
+            </option>
+          ))}
+        </select>
+        <span className="text-[11px] text-neutral-500">
+          The concrete model is resolved live per tier; on a rate limit or outage it automatically steps up to the
+          next tier.
+        </span>
+      </label>
 
-      <section className="mt-6 rounded border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-800">Draft a new positioning externally</h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          Download a single, self-contained prompt file — PositioningDoc/ProfileDoc schema, live examples fetched
-          fresh at download time, and the generation rules — to paste into Claude, Gemini, or another AI alongside a
-          job offer. Paste the AI&apos;s JSON response into the form below.
+      <button
+        type="button"
+        onClick={handleGenerate}
+        disabled={generating || !isLoggedIn || jobOffer.trim().length < 40}
+        className="mt-3 rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {generating ? "Generating…" : "Generate CV"}
+      </button>
+      {costInfo ? (
+        <p className="mt-2">
+          <CostBadge costInfo={costInfo} />
         </p>
-        <button
-          type="button"
-          onClick={handleDownloadContextPrompt}
-          disabled={downloadingPrompt}
-          className="mt-3 rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {downloadingPrompt ? "Preparing…" : "Download context prompt for external AI"}
-        </button>
-        {downloadError ? <p className="mt-2 text-xs text-red-600">{downloadError}</p> : null}
-      </section>
+      ) : null}
 
-      <section className="mt-8 border-t border-neutral-200 pt-6">
-        <h2 className="text-sm font-semibold text-neutral-800">Review &amp; seed to MongoDB</h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          Paste one PositioningDoc object, or an array of them (e.g. an FR + EN pair), and submit directly to
-          MongoDB. No preview step — submitting writes immediately.
-        </p>
+      {error ? (
+        <div className="mt-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-800">
+          <p>{error}</p>
+          <ZodIssuesList issues={issues} />
+        </div>
+      ) : null}
 
-        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-neutral-700">Positioning JSON</span>
-            <textarea
-              value={jsonText}
-              onChange={(e) => setJsonText(e.target.value)}
-              rows={22}
-              spellCheck={false}
-              disabled={!isLoggedIn}
-              className="rounded border border-neutral-300 px-3 py-2 font-mono text-xs disabled:bg-neutral-100 disabled:text-neutral-500"
-              placeholder='{ "_id": "...", "roleGroup": "...", ... }  or  [{ ... }, { ... }]'
-              required
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={submitting || !isLoggedIn}
-            className="self-start rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {submitting ? "Seeding…" : "Seed to MongoDB"}
-          </button>
-        </form>
-
-        {result ? (
-          <div className="mt-6 rounded border border-green-300 bg-green-50 px-4 py-3 text-xs text-green-800">
-            {result.created.length > 0 ? <p>Created: {result.created.join(", ")}</p> : null}
-            {result.updated.length > 0 ? <p>Updated: {result.updated.join(", ")}</p> : null}
-            {result.created.length === 0 && result.updated.length === 0 ? <p>No documents written.</p> : null}
-            {[...result.created, ...result.updated].length > 0 ? (
-              <ul className="mt-2 flex flex-col gap-1">
-                {[...result.created, ...result.updated].map((id) => (
-                  <li key={id}>
-                    <Link href={`/admin/edit/${id}`} className="font-semibold underline hover:no-underline">
-                      Edit &amp; export this positioning ({id})
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+      {positionings && cvData ? (
+        <section className="mt-8 border-t border-neutral-200 pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-neutral-800">Proposed CV — {currentDoc?._id}</h2>
+              <p className="mt-1 text-xs text-neutral-500">
+                Saved to MongoDB.{" "}
+                <Link href={`/admin/edit/${currentDoc?._id}`} className="underline hover:no-underline">
+                  Edit this positioning
+                </Link>
+                .
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex overflow-hidden rounded border border-neutral-300">
+                {(["fr", "en"] as const).map((lang) => {
+                  const disabled = !positionings.some((p) => p.language === lang);
+                  const active = language === lang;
+                  return (
+                    <button
+                      key={lang}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => handleSelectLanguage(lang)}
+                      aria-pressed={active}
+                      className={
+                        "px-3 py-2 text-xs font-semibold uppercase " +
+                        (active
+                          ? "bg-cv-navy text-white"
+                          : disabled
+                            ? "cursor-not-allowed bg-neutral-100 text-neutral-300"
+                            : "bg-white text-neutral-800 hover:bg-neutral-50")
+                      }
+                    >
+                      {lang}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exporting}
+                className="rounded bg-cv-navy px-4 py-2 text-xs font-semibold tracking-wide text-white hover:bg-cv-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {exporting ? "Generating…" : "Export as PDF"}
+              </button>
+            </div>
           </div>
-        ) : null}
+          {exportError ? <p className="mt-2 text-xs text-red-600">Export failed: {exportError}</p> : null}
 
-        {error ? (
-          <div className="mt-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-800">
-            <p>{error}</p>
-            <ZodIssuesList issues={issues} />
+          <div className="mt-6 overflow-x-auto">
+            <CVPreview data={cvData} />
           </div>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
     </div>
   );
 }

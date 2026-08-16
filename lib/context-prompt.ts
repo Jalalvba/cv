@@ -140,7 +140,3 @@ ${JSON.stringify(profile, null, 2)}
 ${CONTEXT_PROMPT_RULES.map((rule) => `- ${rule}`).join("\n")}
 `;
 }
-
-export function contextPromptFilename(): string {
-  return `cv-context-prompt-${todayIso()}.md`;
-}

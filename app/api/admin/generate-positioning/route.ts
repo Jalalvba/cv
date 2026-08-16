@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/admin-auth";
 import { parseJsonBody, zodErrorResponse, errorMessage } from "@/lib/api-errors";
-import { generateJson, GeminiError, GEMINI_MODEL } from "@/lib/gemini";
+import { generateJsonWithFallback, getDefaultModel, GeminiError } from "@/lib/gemini";
+import { getActiveGeminiModel } from "@/lib/getDynamicModel";
+import { DEFAULT_TIER } from "@/lib/geminiModels";
+import { callGeminiWithTracking } from "@/lib/gemini-cost-tracker";
 import {
   EXAMPLE_POSITIONING_ID,
   EXAMPLE_POSITIONING_ID_EN,
@@ -110,7 +113,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = generatePositioningRequestSchema.safeParse(parsedBody.data);
   if (!parsed.success) return zodErrorResponse(parsed);
-  const { jobOffer } = parsed.data;
+  const { jobOffer, modelTier } = parsed.data;
 
   // Fetched fresh per request, exactly like the download button does client-side,
   // so a generated positioning always reflects the current profile.
@@ -140,13 +143,37 @@ export async function POST(request: NextRequest) {
 
   const systemInstruction = buildContextPromptMarkdown(profile, examples) + RESPONSE_ENVELOPE_NOTE;
 
+  // Routed through callGeminiWithTracking rather than calling generateJson
+  // directly, so this action can never skip quota/cost accounting — and so
+  // costInfo comes back in the same round trip as the result, ready to hand
+  // straight to the client below.
   let raw: unknown;
+  let costInfo;
   try {
-    raw = await generateJson({
-      systemInstruction,
-      userPrompt: `Here is the job offer. Produce the FR/EN PositioningDoc pair for it.\n\n---\n\n${jobOffer}`,
-      responseSchema: RESPONSE_SCHEMA as unknown as Record<string, unknown>,
+    // Resolved live (see lib/getDynamicModel.ts) purely to name the quota
+    // slot claimed up front; the actual call may still step up a tier via
+    // generateJsonWithFallback below, in which case billing keys off
+    // whatever modelVersion the response reports, not this value.
+    const startTier = modelTier ?? DEFAULT_TIER;
+    const startModel = modelTier ? await getActiveGeminiModel(modelTier) : await getDefaultModel();
+    const tracked = await callGeminiWithTracking({
+      model: startModel,
+      action: "generate-positioning",
+      call: async () => {
+        // Starts at the requested (or default) tier and steps up to a
+        // pricier tier on a retryable failure (quota/5xx) — see
+        // generateJsonWithFallback.
+        const res = await generateJsonWithFallback({
+          systemInstruction,
+          userPrompt: `Here is the job offer. Produce the FR/EN PositioningDoc pair for it.\n\n---\n\n${jobOffer}`,
+          responseSchema: RESPONSE_SCHEMA as unknown as Record<string, unknown>,
+          startTier,
+        });
+        return { result: res.json, usage: res.usage, modelVersion: res.modelVersion ?? res.model };
+      },
     });
+    raw = tracked.result;
+    costInfo = tracked.costInfo;
   } catch (err) {
     if (err instanceof GeminiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
@@ -154,11 +181,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Positioning generation failed." }, { status: 500 });
   }
 
+  // The call already happened and already cost money, so every rejection past
+  // this point still reports costInfo — otherwise a rejected generation would
+  // silently spend credit with nothing shown for it.
+  const rejected = (error: string) => NextResponse.json({ error, costInfo }, { status: 502 });
+
   if (!Array.isArray(raw) || raw.length !== 2) {
-    return NextResponse.json(
-      { error: "Gemini did not return exactly two positioning documents (one FR, one EN)." },
-      { status: 502 },
-    );
+    return rejected("Gemini did not return exactly two positioning documents (one FR, one EN).");
   }
 
   const positionings: PositioningDoc[] = [];
@@ -166,12 +195,17 @@ export async function POST(request: NextRequest) {
     const item = raw[i] as Record<string, unknown>;
     const bulletSelection = toBulletSelectionRecord(item.bulletSelection);
     if (!bulletSelection) {
-      return NextResponse.json({ error: `Gemini returned an unreadable bulletSelection for item ${i}.` }, { status: 502 });
+      return rejected(`Gemini returned an unreadable bulletSelection for item ${i}.`);
     }
     const result = positioningDocSchema.safeParse({ ...item, bulletSelection });
     if (!result.success) {
       const itemId = typeof item._id === "string" ? item._id : "unknown _id";
-      return zodErrorResponse(result, { prefix: `Gemini returned an invalid document for item ${i} (${itemId})` });
+      // Same {error, issues} body the other routes produce, with costInfo
+      // folded in for the reason described on `rejected` above.
+      const zodResponse = zodErrorResponse(result, {
+        prefix: `Gemini returned an invalid document for item ${i} (${itemId})`,
+      });
+      return NextResponse.json({ ...(await zodResponse.json()), costInfo }, { status: 502 });
     }
     positionings.push(result.data);
   }
@@ -183,38 +217,28 @@ export async function POST(request: NextRequest) {
     for (const [experienceId, bulletIds] of Object.entries(doc.bulletSelection)) {
       const known = validIds.get(experienceId);
       if (!known) {
-        return NextResponse.json(
-          { error: `Gemini referenced an unknown experience id "${experienceId}" in ${doc._id}.` },
-          { status: 502 },
-        );
+        return rejected(`Gemini referenced an unknown experience id "${experienceId}" in ${doc._id}.`);
       }
       const unknownBullet = bulletIds.find((id) => !known.has(id));
       if (unknownBullet) {
-        return NextResponse.json(
-          { error: `Gemini invented bullet id "${unknownBullet}" under "${experienceId}" in ${doc._id}.` },
-          { status: 502 },
-        );
+        return rejected(`Gemini invented bullet id "${unknownBullet}" under "${experienceId}" in ${doc._id}.`);
       }
     }
   }
 
   const [first, second] = positionings;
   if (first.roleGroup !== second.roleGroup) {
-    return NextResponse.json(
-      { error: `Gemini returned mismatched roleGroups ("${first.roleGroup}" vs "${second.roleGroup}").` },
-      { status: 502 },
-    );
+    return rejected(`Gemini returned mismatched roleGroups ("${first.roleGroup}" vs "${second.roleGroup}").`);
   }
   const languages = new Set(positionings.map((doc) => doc.language));
   if (languages.size !== 2) {
-    return NextResponse.json({ error: "Gemini returned two documents in the same language, not an FR/EN pair." }, { status: 502 });
+    return rejected("Gemini returned two documents in the same language, not an FR/EN pair.");
   }
   // Per DOCS.md §7.2 the pair must surface the same bullets in the same order —
   // only targetTitle/summary/skillsOrder are translated.
   if (JSON.stringify(first.bulletSelection) !== JSON.stringify(second.bulletSelection)) {
-    return NextResponse.json(
-      { error: "Gemini returned different bulletSelection values for the FR and EN variants; they must be identical." },
-      { status: 502 },
+    return rejected(
+      "Gemini returned different bulletSelection values for the FR and EN variants; they must be identical.",
     );
   }
 
@@ -223,5 +247,7 @@ export async function POST(request: NextRequest) {
     doc.language === "fr" ? { ...doc, draftTranslation: true } : doc,
   );
 
-  return NextResponse.json({ positionings: reviewed, model: GEMINI_MODEL });
+  // costInfo travels back with the result in this same response — the UI
+  // renders it via <CostBadge/> with no extra request.
+  return NextResponse.json({ positionings: reviewed, model: costInfo.model, costInfo });
 }

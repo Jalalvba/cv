@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx lib/assemble.test.ts",
+    "test": "tsx lib/assemble.test.ts && tsx lib/gemini-cost-tracker.test.ts",
     "db:seed": "tsx --env-file=.env.local scripts/seed.ts",
     "test:google": "tsx --env-file=.env.local scripts/test-google-service-account.ts",
     "test:cv-pipeline": "tsx --env-file=.env.local scripts/test-cv-pipeline.ts"

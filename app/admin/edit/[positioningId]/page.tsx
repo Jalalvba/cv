@@ -14,10 +14,11 @@
  *
  * This replaces the raw-JSON-textarea editor from the prior session — a
  * deliberate reversal, not an addition alongside it — because a structured
- * form is the more intuitive day-to-day editing surface; generating
- * positioning JSON externally via an AI is still supported, just via the
- * "Download context prompt" feature on /admin/positionings instead of a
- * paste-into-this-page workflow.
+ * form is the more intuitive day-to-day editing surface. Drafting a whole
+ * new positioning from a job offer is a separate, fully automatic flow at
+ * /admin/positionings: paste the job offer, Gemini drafts + saves the FR/EN
+ * pair, and the resulting CV is shown right there — there is no manual
+ * JSON review/seed step anymore.
  */
 
 import { useEffect, useState } from "react";
@@ -439,7 +440,7 @@ export default function EditPositioningPage() {
             <p className="text-xs text-neutral-500">
               Edit fields below, then Save changes.{" "}
               <Link href="/admin/positionings" className="underline hover:no-underline">
-                Download a context prompt for external AI
+                Generate a new CV from a job offer
               </Link>{" "}
               if you&apos;d rather draft a whole new positioning that way.
             </p>
@@ -449,7 +450,7 @@ export default function EditPositioningPage() {
               href="/admin/positionings"
               className="rounded border border-neutral-300 px-4 py-2 text-xs font-semibold tracking-wide text-neutral-700 hover:bg-neutral-50"
             >
-              Seed Positionings
+              Generate from job offer
             </Link>
             <button
               type="button"

@@ -182,6 +182,10 @@ export const updatePositioningRequestSchema = z
 // cost) upstream; a real job offer is comfortably under it.
 export const generatePositioningRequestSchema = z.object({
   jobOffer: z.string().trim().min(40, "Paste the job offer text (at least 40 characters).").max(20000),
+  // Which Gemini tier to start generation at — defaults to the cheapest tier
+  // (see lib/geminiModels.ts's DEFAULT_TIER) when omitted. generateJsonWithFallback
+  // still steps up to a pricier tier automatically on a retryable failure.
+  modelTier: z.enum(["flash-lite", "flash", "pro"]).optional(),
 });
 
 // Matches lib/cv-data.ts's CvData — the assembled shape sent to POST /api/export-pdf.

@@ -1,4 +1,7 @@
 import { errorMessage } from "@/lib/api-errors";
+import type { GeminiUsageMetadata } from "@/lib/gemini-cost-tracker";
+import { DEFAULT_TIER, TIER_ORDER, type ModelTier } from "@/lib/geminiModels";
+import { getActiveGeminiModel } from "@/lib/getDynamicModel";
 
 /**
  * Minimal server-only Gemini client — the live replacement for the previous
@@ -16,13 +19,18 @@ import { errorMessage } from "@/lib/api-errors";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 /**
- * Rolling alias for the cheapest active tier. This task is constrained
- * generation (pick existing bullet ids, rewrite a title/summary/skill list),
- * not open-ended reasoning, so the lite tier is the right default — the
- * schema plus the post-validation in generate-positioning/route.ts catch a
- * weaker model's mistakes rather than letting them reach MongoDB.
+ * Resolves the model id this app's constrained-generation tasks (pick
+ * existing bullet ids, rewrite a title/summary/skill list) should use by
+ * default — the lite tier is the right default, since the schema plus the
+ * post-validation in generate-positioning/route.ts catch a weaker model's
+ * mistakes rather than letting them reach MongoDB.
+ *
+ * Resolved live via getActiveGeminiModel() rather than a hardcoded constant,
+ * so a new model release doesn't require a code change here.
  */
-export const GEMINI_MODEL = "gemini-flash-lite-latest";
+export function getDefaultModel(): Promise<string> {
+  return getActiveGeminiModel(DEFAULT_TIER);
+}
 
 /**
  * Structured-JSON settings. Low (not zero) temperature: the output is a
@@ -72,21 +80,49 @@ function requireApiKey(): string {
 /** The JSON Schema subset Gemini accepts for responseSchema. */
 export type ResponseSchema = Record<string, unknown>;
 
+export interface GenerateJsonResult {
+  /** The parsed JSON body. Shape validation is the caller's job. */
+  json: unknown;
+  /** Raw token accounting, passed to the cost tracker. Absent on some responses. */
+  usage: GeminiUsageMetadata | undefined;
+  /**
+   * The concrete model that actually served the request (e.g.
+   * "gemini-2.5-flash-lite"). This is how a rolling alias becomes priceable —
+   * see lib/gemini-cost-tracker.ts.
+   */
+  modelVersion: string | undefined;
+}
+
 /**
- * Calls generateContent with JSON mode on, and returns the raw parsed JSON.
- * Shape validation is the caller's job — JSON mode guarantees parseable
- * JSON, never that the content is correct.
+ * Calls generateContent with JSON mode on, and returns the parsed JSON plus
+ * the response's token accounting. JSON mode guarantees parseable JSON, never
+ * that the content is correct.
+ *
+ * INTERNAL TRANSPORT — routes must not call this directly. Every action goes
+ * through callGeminiWithTracking() in lib/gemini-cost-tracker.ts, so a call
+ * can never skip the quota count, usage history and credit accounting.
  */
 export async function generateJson(opts: {
   systemInstruction: string;
   userPrompt: string;
   responseSchema: ResponseSchema;
-}): Promise<unknown> {
+  /** Concrete model id or rolling alias. Defaults to the live-discovered default tier. */
+  model?: string;
+}): Promise<GenerateJsonResult> {
   const apiKey = requireApiKey();
+  const model = opts.model ?? (await getDefaultModel());
+  if (!isWellFormedModelId(model)) {
+    // model is interpolated straight into the request URL below. Ids are
+    // discovered live rather than checked against a fixed allowlist (that
+    // was the whole thing being fixed here), so validation is a charset/shape
+    // check instead: reject anything that isn't a plain "gemini-..." token
+    // before it can become part of the request path.
+    throw new GeminiError(`Malformed Gemini model id "${model}".`, 500);
+  }
 
   let response: Response;
   try {
-    response = await fetch(`${GEMINI_ENDPOINT}/${GEMINI_MODEL}:generateContent`, {
+    response = await fetch(`${GEMINI_ENDPOINT}/${model}:generateContent`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -151,11 +187,79 @@ export async function generateJson(opts: {
     throw new GeminiError("Gemini returned an empty response.", 502);
   }
 
+  let json: unknown;
   try {
-    return JSON.parse(text) as unknown;
+    json = JSON.parse(text) as unknown;
   } catch {
     throw new GeminiError("Gemini returned malformed JSON despite JSON mode being enabled.", 502);
   }
+
+  return { json, usage: payload.usageMetadata, modelVersion: payload.modelVersion };
+}
+
+/**
+ * Shape check only — NOT a fixed registry, since model ids now come from
+ * live discovery (lib/getDynamicModel.ts) and are expected to change without
+ * a code change here. Matches both concrete ids ("gemini-2.5-flash-lite")
+ * and rolling aliases ("gemini-flash-lite-latest"): lowercase letters,
+ * digits, dots and hyphens only, so nothing in this string can break out of
+ * the URL path segment it's interpolated into.
+ */
+const MODEL_ID_PATTERN = /^gemini-[a-z0-9][a-z0-9.-]*$/;
+
+function isWellFormedModelId(model: string): boolean {
+  return MODEL_ID_PATTERN.test(model);
+}
+
+/** Whether a failure is worth retrying against a pricier tier, vs. one the next tier would hit too. */
+function isRetryableAcrossTiers(err: unknown): boolean {
+  if (!(err instanceof GeminiError)) return false;
+  // 429 (this model's quota) and 5xx/network (502) are model-specific — a
+  // different tier is a genuinely different backend and may succeed. 4xx
+  // request-shape errors (400, 401/403, malformed/empty response) would
+  // reproduce identically on any model, so retrying wastes a call.
+  return err.status === 429 || err.status === 502;
+}
+
+/**
+ * generateJson with automatic step-down-tier fallback: starts at `startTier`
+ * (default "flash-lite") and, on a retryable failure (quota/5xx/network),
+ * retries once against the next tier up in TIER_ORDER before giving up.
+ * Every attempt still flows through generateJson, so each one is priced and
+ * validated identically — only the model id changes between attempts.
+ */
+export async function generateJsonWithFallback(opts: {
+  systemInstruction: string;
+  userPrompt: string;
+  responseSchema: ResponseSchema;
+  startTier?: ModelTier;
+}): Promise<GenerateJsonResult & { model: string }> {
+  const startIndex = Math.max(0, TIER_ORDER.indexOf(opts.startTier ?? DEFAULT_TIER));
+  const tiersToTry = TIER_ORDER.slice(startIndex);
+
+  let lastError: unknown;
+  for (let i = 0; i < tiersToTry.length; i++) {
+    const tier = tiersToTry[i];
+    // Resolved live per attempt (not read from a hardcoded list) so a tier
+    // whose whole lineup changed since the last deploy still resolves.
+    const modelId = await getActiveGeminiModel(tier);
+    try {
+      const result = await generateJson({
+        systemInstruction: opts.systemInstruction,
+        userPrompt: opts.userPrompt,
+        responseSchema: opts.responseSchema,
+        model: modelId,
+      });
+      return { ...result, model: modelId };
+    } catch (err) {
+      lastError = err;
+      const hasMoreTiers = i < tiersToTry.length - 1;
+      if (!hasMoreTiers || !isRetryableAcrossTiers(err)) throw err;
+      // else: fall through and retry against the next (pricier) tier
+    }
+  }
+  // Unreachable when TIER_ORDER is non-empty, but keeps the return type honest.
+  throw lastError instanceof Error ? lastError : new GeminiError("Gemini generation failed.", 502);
 }
 
 interface GeminiResponse {
@@ -163,4 +267,7 @@ interface GeminiResponse {
     finishReason?: string;
     content?: { parts?: { text?: string }[] };
   }[];
+  usageMetadata?: GeminiUsageMetadata;
+  /** Concrete model that served the request — present even when a rolling alias was requested. */
+  modelVersion?: string;
 }
