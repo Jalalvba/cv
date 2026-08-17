@@ -9,8 +9,8 @@ import { CostBadge } from "@/components/CostBadge";
 import type { CostInfo } from "@/lib/gemini-cost-tracker";
 import type { ZodIssueLike } from "@/lib/zod-issues";
 import type { CvData, PositioningDoc } from "@/lib/cv-data";
-import { slugify } from "@/lib/utils";
-import { MODEL_TIERS, DEFAULT_TIER, type ModelTier } from "@/lib/geminiModels";
+import { downloadCvPdf } from "@/lib/cv-pdf-client";
+import { MODEL_TIERS, DEFAULT_TIER, type ModelTier } from "@/lib/gemini-models";
 
 type Language = "en" | "fr";
 
@@ -112,26 +112,7 @@ export default function AdminPositioningsPage() {
     setExporting(true);
     setExportError(null);
     try {
-      const cvRes = await fetch(`/api/cv/${currentDoc._id}`);
-      if (!cvRes.ok) throw new Error(`Failed to load CV (${cvRes.status})`);
-      const freshData: CvData = await cvRes.json();
-
-      const exportRes = await fetch("/api/export-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(freshData),
-      });
-      if (!exportRes.ok) throw new Error(`PDF generation failed (${exportRes.status})`);
-      const blob = await exportRes.blob();
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${slugify(freshData.name)}-cv.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadCvPdf(currentDoc._id);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {

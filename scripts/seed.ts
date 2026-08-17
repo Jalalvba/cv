@@ -7,8 +7,9 @@
  * Re-running this script is idempotent: it never duplicates documents or
  * bullets, it just overwrites each `_id` with the content below.
  *
- * Content is transcribed from the real reference CV
- * (template/CV_Jalal_Chafiq_Stellantis.pdf) — not placeholder text.
+ * Content is transcribed from the real reference CV — not placeholder text.
+ * (The source PDF lived in a template/ directory that no longer exists; the
+ * transcription here is now the only copy in the repo.)
  */
 import { MongoClient } from "mongodb";
 import { profileDocSchema, positioningDocSchema } from "../lib/validation";

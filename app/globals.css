@@ -14,22 +14,3 @@
 body {
   font-family: var(--font-sans);
 }
-
-/* Editable fields: no browser default outline; a soft dashed amber box on
-   focus/hover signals "click to edit" without touching layout metrics that
-   must match the PDF exactly. */
-[contenteditable="true"] {
-  outline: none;
-  border-radius: 2px;
-  transition: box-shadow 0.1s ease;
-}
-[contenteditable="true"]:hover {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-cv-amber) 35%, transparent);
-}
-[contenteditable="true"]:focus {
-  box-shadow: 0 0 0 2px var(--color-cv-amber);
-}
-[contenteditable="true"]:empty::before {
-  content: attr(data-placeholder);
-  color: #b3b3b3;
-}

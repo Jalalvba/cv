@@ -1,6 +1,4 @@
-import type { ModelTier } from "@/lib/geminiModels";
-
-export type { ModelTier };
+import type { ModelTier } from "@/lib/gemini-models";
 
 interface GeminiApiRawModel {
   name: string; // "models/gemini-2.5-flash-lite"
@@ -102,7 +100,7 @@ export async function getActiveGeminiModel(tier: ModelTier = "flash-lite"): Prom
   const fallbackAlias = `gemini-${tier}-latest`;
 
   if (!apiKey) {
-    console.warn("[getDynamicModel] GEMINI_API_KEY missing, using fallback alias:", fallbackAlias);
+    console.warn("[gemini-model-discovery] GEMINI_API_KEY missing, using fallback alias:", fallbackAlias);
     return fallbackAlias;
   }
 
@@ -113,7 +111,7 @@ export async function getActiveGeminiModel(tier: ModelTier = "flash-lite"): Prom
     });
 
     if (!response.ok) {
-      console.warn(`[getDynamicModel] API returned ${response.status}, using alias: ${fallbackAlias}`);
+      console.warn(`[gemini-model-discovery] API returned ${response.status}, using alias: ${fallbackAlias}`);
       return fallbackAlias;
     }
 
@@ -130,14 +128,14 @@ export async function getActiveGeminiModel(tier: ModelTier = "flash-lite"): Prom
       .filter((id) => tierOf(id) === tier);
 
     if (matchingTierModels.length === 0) {
-      console.warn(`[getDynamicModel] No active models found for tier "${tier}", using alias: ${fallbackAlias}`);
+      console.warn(`[gemini-model-discovery] No active models found for tier "${tier}", using alias: ${fallbackAlias}`);
       return fallbackAlias;
     }
 
     matchingTierModels.sort(compareModelsNewestFirst);
     return matchingTierModels[0] ?? fallbackAlias;
   } catch (error) {
-    console.warn("[getDynamicModel] Error during model discovery, using fallback alias:", error);
+    console.warn("[gemini-model-discovery] Error during model discovery, using fallback alias:", error);
     return fallbackAlias;
   }
 }

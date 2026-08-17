@@ -1,7 +1,7 @@
 /**
  * Tier taxonomy for Gemini models used by this app. NOT a registry of
  * concrete model ids — those are resolved live at call time by
- * lib/getDynamicModel.ts's getActiveGeminiModel(), since hardcoding ids here
+ * lib/gemini-model-discovery.ts's getActiveGeminiModel(), since hardcoding ids here
  * is exactly the failure mode that broke every time Google rotated its
  * model lineup. This file only holds the tier ordering and static UI labels
  * that don't need to track a specific release.

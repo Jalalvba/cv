@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { CvData } from "@/lib/cv-data";
 import { CVPreview } from "@/components/CVPreview";
 import { RoleLanguageSelector } from "@/components/RoleLanguageSelector";
-import { slugify } from "@/lib/utils";
+import { downloadCvPdf } from "@/lib/cv-pdf-client";
 
 interface RoleSummary {
   roleGroup: string;
@@ -86,26 +86,7 @@ export default function Home() {
     setExporting(true);
     setExportError(null);
     try {
-      const cvRes = await fetch(`/api/cv/${positioningId}`);
-      if (!cvRes.ok) throw new Error(`Failed to load CV (${cvRes.status})`);
-      const freshData: CvData = await cvRes.json();
-
-      const exportRes = await fetch("/api/export-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(freshData),
-      });
-      if (!exportRes.ok) throw new Error(`PDF generation failed (${exportRes.status})`);
-      const blob = await exportRes.blob();
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${slugify(freshData.name)}-cv.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadCvPdf(positioningId);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {

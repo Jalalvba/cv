@@ -81,7 +81,7 @@ interface ProfileDoc {
 export const EXAMPLE_POSITIONING_ID = "after_sales_manager_fr";
 export const EXAMPLE_POSITIONING_ID_EN = "after_sales_manager_en";
 
-export const CONTEXT_PROMPT_RULES = [
+const CONTEXT_PROMPT_RULES = [
   "Use EXCLUSIVELY existing bullet ids from the profile provided below — never invent new bullet text.",
   "SELECT, do not dump: choose only the 3-5 MOST RELEVANT bullets per role for this specific job offer. Never include every bullet a role has. A positioning is a targeted selection, not the full profile — including everything is a failure, not a safe default.",
   "Rank each role's bullets against the offer's key requirements and keep the top 3-5: a bullet that directly matches a stated requirement (a named responsibility, tool, standard, metric, or scope in the offer) always beats a general or generic-strength bullet. If a role has more than 5 bullets that match, keep the 5 strongest and drop the rest.",

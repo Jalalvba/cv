@@ -57,28 +57,46 @@ CV/
 │   ├── globals.css                  Tailwind theme tokens
 │   ├── admin/
 │   │   ├── edit/page.tsx            redirects to a default positioning's editor
-│   │   ├── edit/[positioningId]/page.tsx   gated full editor (login form if logged out)
-│   │   └── positionings/page.tsx    gated bulk JSON paste-and-seed tool
-│   └── api/                         see §7 for the full route table
+│   │   ├── edit/[positioningId]/    gated full editor — split across several files:
+│   │   │   ├── page.tsx               entry point: auth gate, layout, PDF preview/export
+│   │   │   ├── usePositioningEditor.ts  loads both docs, owns every field mutation + save
+│   │   │   ├── diff.ts                which edits the targeted PATCH routes can persist
+│   │   │   ├── fields.ts              shared input styling + tag parsing helpers
+│   │   │   ├── SaveResultPanel.tsx    what the last save did / didn't store
+│   │   │   └── sections/              one component per group of fields
+│   │   └── positionings/page.tsx    gated job-offer → CV generator (§8.4)
+│   └── api/                         see §7.4 for the full route table
 ├── components/
 │   ├── AdminLoginForm.tsx           password form, used when the admin area is logged out
+│   ├── CostBadge.tsx                per-call Gemini cost/tier badge (renders CostInfo, never fetches)
 │   ├── CVDocument.tsx               the @react-pdf/renderer PDF layout
 │   ├── CVPreview.tsx                read-only on-screen CV rendering (pixel-matched to CVDocument)
 │   ├── RoleLanguageSelector.tsx     role dropdown + FR/EN toggle, used on Home and in the admin editor
-│   └── TopNav.tsx                   persistent top nav — Home / Admin links only
+│   ├── TopNav.tsx                   persistent top nav — Home / Admin links only
+│   └── ZodIssuesList.tsx            shared rendering for a zod validation issue list
 ├── lib/
 │   ├── admin-auth.ts                requireAdminSession() — the gate every /api/admin/* mutation route calls
+│   ├── api-errors.ts                shared route helpers: errorMessage, parseJsonBody, zodErrorResponse
 │   ├── assemble.ts                  merges ProfileDoc + PositioningDoc → CvData
 │   ├── assemble.test.ts             plain node:assert tests for assemble() — `pnpm run test`
 │   ├── auth-context.tsx             client AuthProvider / useAuth()
+│   ├── context-prompt.ts            builds the Gemini system prompt (shapes + live examples + rules)
 │   ├── cv-data.ts                   ProfileDoc, PositioningDoc, CvData — the canonical types
-│   ├── db.ts                        MongoDB client singleton
-│   ├── gemini.ts                    server-only Gemini client (JSON mode) — powers /api/admin/generate-positioning
+│   ├── cv-pdf-client.ts             browser-side renderCvPdf() / downloadCvPdf() — the one export flow
+│   ├── db.ts                        MongoDB client singleton — getDb() is the only entry point
+│   ├── gemini.ts                    server-only Gemini client (JSON mode) + step-up-tier fallback
+│   ├── gemini-cost-tracker.ts       pricing, free-tier quota, usage log, prepaid credit accounting
+│   ├── gemini-cost-tracker.test.ts  node:assert tests for the pure pricing helpers — `pnpm run test`
+│   ├── gemini-models.ts             tier taxonomy (flash-lite / flash / pro) + UI labels — NOT model ids
+│   ├── gemini-model-discovery.ts    getActiveGeminiModel() — resolves a tier to a live model id
 │   ├── google.ts                    Google service-account auth — dev tooling only, not used by the app
+│   ├── pdf.ts                       countPdfPages() — drives the export route's fit-to-one-page search
+│   ├── profile.ts                   PROFILE_ID + getProfile() — the one profile document's lookup
 │   ├── session.ts                   iron-session config, getSession()
 │   ├── tokens.ts                    design tokens (colors, mm/pt spacing) — THE source of truth
 │   ├── utils.ts                     slugify()
-│   └── validation.ts                zod schemas mirroring cv-data.ts
+│   ├── validation.ts                zod schemas mirroring cv-data.ts
+│   └── zod-issues.ts                ZodError → flat {path, message}[] (isomorphic; safe on the client)
 ├── scripts/
 │   ├── seed.ts                      upserts profile + all positionings into MongoDB Atlas — `pnpm run db:seed`
 │   ├── test-cv-pipeline.ts          fetches live data, runs assemble()+schema validation per positioning
@@ -94,7 +112,7 @@ No `template/` directory anymore — the reference PDFs the design tokens were o
 
 ## 6. Design tokens
 
-The visual design (navy `#0B1F33`, amber `#C77D2E`, body `#222222`, grey `#444444`/`#777777`; Helvetica/Helvetica-Bold/Helvetica-Oblique; A4 210×297mm with 18mm margins; 24mm square photo; 10pt body text at 1.2 line-height) was originally pixel-sampled from three reference CV PDFs at 150dpi. All of it lives in **`lib/tokens.ts`**, the single source of truth: `COLORS`, `PAGE`, `PHOTO_SIZE_MM`, `FONT_SIZE`, `SPACING_MM`, `LINE_HEIGHT`, `DIVIDER_THICKNESS_PT`, `mmToPt()`.
+The visual design (navy `#0B1F33`, amber `#C77D2E`, body `#222222`, grey `#444444`/`#777777`; Helvetica/Helvetica-Bold/Helvetica-Oblique; A4 210×297mm with 12mm margins; 24mm square photo; 10pt body text at 1.2 line-height) was originally pixel-sampled from three reference CV PDFs at 150dpi. All of it lives in **`lib/tokens.ts`**, the single source of truth: `COLORS`, `PAGE`, `PHOTO_SIZE_MM`, `FONT_SIZE`, `SPACING_MM`, `LINE_HEIGHT`, `DIVIDER_THICKNESS_PT`, `mmToPt()`.
 
 **Keeping the web preview and PDF pixel-identical:** `components/CVPreview.tsx` (web) and `components/CVDocument.tsx` (PDF) are built from the same `lib/tokens.ts` numbers, expressed as physical CSS units (`w-[210mm]`, `text-[11pt]`, etc.). `CVDocument.tsx` imports `tokens.ts` directly. `CVPreview.tsx` **cannot** — Tailwind's JIT compiler needs literal static class strings, not runtime-interpolated ones — so the mm/pt literals are hand-copied into its JSX. Likewise `app/globals.css`'s `@theme` block hand-copies the colors (CSS can't import a TS module either). **If you change a value in `tokens.ts`, update the matching literal in both `CVPreview.tsx` and `globals.css`.**
 
@@ -194,6 +212,25 @@ interface CvData {
 
 `assemble(profile, positioning)`: for each `experience` entry, look up `positioning.bulletSelection[exp.id]`; if present, keep only those bullet ids in that order; if absent, include all of that role's bullets. For each selected bullet, resolve `text` or `textFr` by `positioning.language` — an `"en"` positioning always uses `text`; an `"fr"` positioning uses `textFr` if present, otherwise **falls back to `text` and calls `console.warn()` naming the bullet id** (degrades gracefully, never silent). `education[].description` resolves the same way via `descriptionFr`. `contact.age` is computed from `personal.dateOfBirth` fresh on every call (never cached/stored, so it can't go stale), and `contact.address` is `personal.address.street`/`postalCode` only, joined into one line — city/country are deliberately omitted since `contact.location` already shows them, so they aren't duplicated on the same contact line. Both `contact.age`/`contact.address` are `undefined` when the source field is unset. `CVDocument.tsx`/`CVPreview.tsx` join `contact.address` and `contact.age` (as `"{n} years"`) into the CV's contact line alongside `email`/`phone`/`location`/`website` — the two components' join logic must stay in sync (see §6). Produced by `GET /api/cv/[positioningId]`, consumed by both `CVPreview.tsx` (Home) and `CVDocument.tsx` (PDF export).
 
+### 7.4 API route table
+
+| Route | Method | Gated | Purpose |
+|---|---|---|---|
+| `/api/positionings` | GET | no | Role list for the picker: `{roleGroup, label, variants:{en?,fr?}}[]` |
+| `/api/cv/[positioningId]` | GET | no | Assembled `CvData` (profile + positioning via `assemble()`) |
+| `/api/profile` | GET | no | The raw `ProfileDoc` |
+| `/api/export-pdf` | POST | no | `CvData` in, PDF out; shrinks to fit one A4 page (§6) |
+| `/api/admin/positioning/[positioningId]` | GET | no | One raw `PositioningDoc`. Read-only, same exposure as the two reads above |
+| `/api/admin/generate-positioning` | POST | **yes** | Job offer → validated FR/EN pair + `costInfo`. Never writes (§8.4) |
+| `/api/admin/seed-positioning` | POST | **yes** | Upserts one or many `PositioningDoc`s by `_id` |
+| `/api/admin/update-positioning` | PATCH | **yes** | Targeted edit: `targetTitle`/`summary`/`skillsOrder`/`bulletSelection` |
+| `/api/admin/update-profile` | PATCH | **yes** | Targeted edit of `personal`/`education`/bullets (§8.3) |
+| `/api/auth/login` · `/logout` · `/status` | POST · POST · GET | no | Session lifecycle (§8.2) |
+| `/api/track/open` | GET | no | 1×1 GIF email-open pixel; logs best-effort, never fails visibly |
+| `/api/track/stats` | GET | secret | Open counts for one tracking id; requires `TRACKING_STATS_SECRET` |
+
+Every route sets `export const runtime = "nodejs"`. "Gated" means the route calls `requireAdminSession()` (§8.2) before doing anything else.
+
 ## 8. Architecture: public Home vs. gated admin
 
 ### 8.1 Public Home (`/`, `app/page.tsx`)
@@ -214,15 +251,29 @@ There is no token-based auth anywhere in this codebase anymore (an earlier `ADMI
 
 ### 8.3 Admin editor (`/admin/edit/[positioningId]`)
 
-Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and renders a structured, field-by-field form — individual inputs for name/email/phone/location/address/dateOfBirth/website/languages, education entries (with add/remove), each role's bullet selection (add from profile / remove / reorder via `bulletSelection`), and skills (add/remove/reorder). This replaced an earlier raw-JSON-textarea editor; generating positioning JSON externally via an AI assistant is still supported, just via the downloadable context prompt on §8.4 rather than a paste-into-this-page workflow.
+Client-gated on `isLoggedIn`: logged out renders **only** `<AdminLoginForm />` — no data fetch happens, no CV content, nothing else on the page. Logged in, it fetches `GET /api/profile` + `GET /api/admin/positioning/[id]` + `GET /api/cv/[id]` and renders a structured, field-by-field form — individual inputs for name/email/phone/location/address/dateOfBirth/website/languages, education entries (with add/remove), each role's bullet selection (add from profile / remove / reorder via `bulletSelection`), and skills (add/remove/reorder). This replaced an earlier raw-JSON-textarea editor; drafting a whole new positioning now happens through the automatic job-offer flow in §8.4 rather than by hand-writing JSON.
 
-"Save changes" diffs the edited `profile`/`positioning` against the last-loaded snapshot (`app/admin/edit/[positioningId]/diff.ts`'s `diffProfile`/`diffPositioning`) and sends only what changed to `PATCH /api/admin/update-profile` / `/api/admin/update-positioning`, validated there against `updateProfileRequestSchema`/`updatePositioningRequestSchema` (see `lib/validation.ts`). Everything the form exposes round-trips this way — including `personal.address`, `personal.languages`, education/bullet `tags`, and structural add/remove of whole education entries or bullet selections. What's still genuinely out of scope for a targeted PATCH (adding/removing a whole experience/role entry, a role's title/company/location/dates, authoring a brand-new bullet's text, or restructuring a positioning's `_id`/`roleGroup`/`format`/`language`/`draftTranslation`) is reported back as "not saved" rather than silently dropped, and still goes through §8.4's full-document replace. "Preview PDF" / "Export & Download" work the same as Home's export, plus there's a "Seed Positionings" link to §8.4 and a "Logout" button.
+The page is split rather than written as one component: `page.tsx` is the entry point (auth gate, layout, PDF preview/export), `usePositioningEditor.ts` owns loading both documents plus every field mutation and the save round trip, `sections/*` render one group of fields each from explicit props, and `SaveResultPanel.tsx` reports the outcome.
 
-### 8.4 Bulk seed tool (`/admin/positionings`)
+"Save changes" diffs the edited `profile`/`positioning` against the last-loaded snapshot (`app/admin/edit/[positioningId]/diff.ts`'s `diffProfile`/`diffPositioning`) and sends only what changed to `PATCH /api/admin/update-profile` / `/api/admin/update-positioning`, validated there against `updateProfileRequestSchema`/`updatePositioningRequestSchema` (see `lib/validation.ts`). Everything the form exposes round-trips this way — including `personal.address`, `personal.languages`, education/bullet `tags`, and structural add/remove of whole education entries or bullet selections. What's still genuinely out of scope for a targeted PATCH (adding/removing a whole experience/role entry, a role's title/company/location/dates, authoring a brand-new bullet's text, or restructuring a positioning's `_id`/`roleGroup`/`format`/`language`/`draftTranslation`) is reported back as "not saved" rather than silently dropped, and still goes through §8.4's full-document replace. "Preview PDF" / "Export & Download" work the same as Home's export, plus there's a "Generate from job offer" link to §8.4 and a "Logout" button.
 
-Also gated (client shows disabled fields when logged out; server-side `POST /api/admin/seed-positioning` is gated regardless). A "Download context prompt for external AI" button (`lib/context-prompt.ts`'s `buildContextPromptMarkdown()`) fetches `GET /api/profile` + a real FR/EN `PositioningDoc` example pair (`GET /api/admin/positioning/after_sales_manager_fr` / `after_sales_manager_en`) fresh at click time and assembles one self-contained `.md` file — instructions, the annotated `PositioningDoc` shape, the live positioning example, the annotated `ProfileDoc` shape, the live full profile, then the standing generation rules (bullet-id-only, identical `bulletSelection` across FR/EN, the `format` heuristic, no invented skills for gaps) — meant to be pasted whole into an external AI assistant alongside a job offer. There's no separate on-page schema display; the downloaded file is the only place this content lives. **Live generation (`POST /api/admin/generate-positioning`)** removes the copy-paste round trip for the common case: paste a job offer into the "Generate from a job offer" box and the route builds that *same* `buildContextPromptMarkdown()` prompt server-side, sends it to Gemini (`gemini-flash-lite-latest`, temp 0.25, `maxOutputTokens` 8192) in JSON mode with a `responseSchema`, and returns a validated FR/EN pair. Because Gemini's schema dialect has no open-ended map type, `bulletSelection` is requested as an array of `{experienceId, bulletIds}` and folded back into its record shape server-side. The response is then re-checked beyond the schema: every experience/bullet id must actually exist in the profile (an invented id would parse fine and silently render an empty role), the pair must share a `roleGroup`, be one `fr` + one `en`, and have byte-identical `bulletSelection` per §7.2; the `fr` variant is auto-flagged `draftTranslation: true`. `lib/gemini.ts` maps upstream failures to distinct statuses (429 → 429, 5xx/network → 502, 401/403 → 500) and never surfaces or logs Gemini's raw error body or the API key. **The route never writes to MongoDB** — it fills the review textarea below, and seeding stays the explicit second click.
+### 8.4 Job offer → CV generator (`/admin/positionings`)
 
-The download-the-prompt path remains for cases where you want to iterate with an external chat. Paste one `PositioningDoc` JSON object or an array back into the form, submit — validates against `positioningDocSchema` and `replaceOne(..., { upsert: true })`s each by `_id`. No preview step; submitting writes immediately.
+Fully automatic, single-click: paste a job offer, and the page generates the FR/EN positioning pair, saves it, and renders the resulting CV for review and export. There is **no** downloadable context prompt, no JSON paste box, and no manual review-then-seed step — an earlier two-step workflow (generate → hand-review JSON → seed) was replaced by this one.
+
+Gated (the inputs are disabled when logged out; `POST /api/admin/generate-positioning` and `POST /api/admin/seed-positioning` are both gated server-side regardless).
+
+The client does three things in order: `POST /api/admin/generate-positioning` with the job offer text and the chosen model tier → `POST /api/admin/seed-positioning` with the returned pair → `GET /api/cv/[id]` to render it via `CVPreview`. Export uses the shared `downloadCvPdf()` (`lib/cv-pdf-client.ts`), the same helper Home and the editor use.
+
+**Generation (`POST /api/admin/generate-positioning`)** builds its system prompt with `lib/context-prompt.ts`'s `buildContextPromptMarkdown()` — the annotated `PositioningDoc` and `ProfileDoc` shapes, a live FR/EN example pair fetched fresh per request (`after_sales_manager_fr` / `_en`), the live full profile, and the standing generation rules (bullet-id-only, select 3–5 bullets per role, identical `bulletSelection` across FR/EN, the `format` heuristic, no invented skills for gaps). It sends that to Gemini in JSON mode with a `responseSchema` at temperature 0.25 and `maxOutputTokens` 8192.
+
+The model is **not** hardcoded: `lib/gemini-model-discovery.ts`'s `getActiveGeminiModel()` resolves the requested tier (`flash-lite` by default — see `lib/gemini-models.ts`) against Google's live ListModels endpoint, cached 24h, falling back to the `gemini-{tier}-latest` rolling alias on any failure. `generateJsonWithFallback()` starts at that tier and steps up to a pricier one on a retryable failure (429 or 5xx/network only — a 400-class error would reproduce identically).
+
+Because Gemini's schema dialect has no open-ended map type, `bulletSelection` is requested as an array of `{experienceId, bulletIds}` and folded back into its record shape server-side. The response is then re-checked beyond the schema: every experience/bullet id must actually exist in the profile (an invented id would parse fine and silently render an empty role), the pair must share a `roleGroup`, be one `fr` + one `en`, and have byte-identical `bulletSelection` per §7.2; the `fr` variant is auto-flagged `draftTranslation: true`.
+
+`lib/gemini.ts` maps upstream failures to distinct statuses (429 → 429, 5xx/network → 502, 401/403 → 500) and never surfaces or logs Gemini's raw error body or the API key. **The generate route itself never writes to MongoDB** — the separate seed call does, which is what makes the pair reviewable as a CV rather than as JSON.
+
+**Cost tracking.** Every Gemini call goes through `callGeminiWithTracking()` (`lib/gemini-cost-tracker.ts`), which claims a free-tier quota slot up front (atomically, so concurrent instances can't both take the last one), bills against the concrete model the response reports in `modelVersion` rather than the alias requested, records the call in `gemini_usage_log` / `gemini_usage_totals`, and derives the remaining prepaid credit from those totals. The resulting `costInfo` travels back inline with the generation result and renders via `<CostBadge/>` — no second request. The free/paid split is this app's own estimate, not Google's billing; cross-check at <https://aistudio.google.com/usage>.
 
 ## 9. Environment variables
 
@@ -232,6 +283,9 @@ The download-the-prompt path remains for cases where you want to iterate with an
 | `IRON_SESSION_SECRET` | Admin auth (`lib/session.ts`) | 32+ random chars, e.g. `openssl rand -hex 32`. Never commit a real value. |
 | `ADMIN_PASSWORD` | Admin login (`/api/auth/login`) | Single password, not hashed — this is a personal single-user tool, not a multi-user system. |
 | `GEMINI_API_KEY` | `POST /api/admin/generate-positioning` (§8.4) | Google AI Studio key. Read only server-side via `lib/gemini.ts`, never exposed to the client. Checked per-call, so a missing key breaks only that one admin feature rather than the build. |
+| `TRACKING_STATS_SECRET` | `GET /api/track/stats` (email open-tracking) | Shared secret, sent as `x-tracking-secret` or `?key=`. The route returns 500 if unset, so stats are unreachable rather than public. `GET /api/track/open` needs no secret — it's the pixel itself. |
+| `USD_TO_MAD_RATE` | Cost display (`lib/gemini-cost-tracker.ts`) | Optional. Defaults to `9.4`; a non-numeric or non-positive value warns and falls back. |
+| `GEMINI_PREPAID_USD_BALANCE` | Remaining-credit figure (§8.4) | Optional, defaults to `0`. Remaining credit is *derived* as this minus all recorded paid-tier spend, so raise it when you top up rather than tracking a separate balance. |
 | `GOOGLE_SERVICE_ACCOUNT_KEY_B64` | Nothing in the deployed app | Only read by `scripts/test-google-service-account.ts` (dev tooling, not imported by any `app/` route) |
 | `GOOGLE_DRIVE_TEST_FOLDER_ID`, `GOOGLE_SHEETS_TEST_SPREADSHEET_ID` | Nothing in the deployed app | Same script as above |
 
@@ -239,7 +293,7 @@ The download-the-prompt path remains for cases where you want to iterate with an
 
 ## 10. Known gaps / possible future work
 
-- **Pagination**: page breaks fall only between whole entries (`wrap={false}`), never mid-bullet. A positioning with many included bullets across all roles may still export to 2 pages.
+- **Pagination**: one A4 page is enforced, not best-effort — `app/api/export-pdf/route.ts`'s `fitToOnePage()` renders at scale 1, counts pages via `lib/pdf.ts`, and re-renders at progressively smaller scales down to a 0.8 floor (an 8pt body-text readability limit). Content that still overflows at that floor ships anyway with a loud server-side warning, and below scale 1 the PDF is no longer pixel-identical to the on-screen preview — a disclosed trade-off, since fitting one page takes priority.
 - **No role exclusion**: `assemble()` always includes every role from `profile.experience`; a positioning can only filter *which bullets* appear per role (§7.2), not drop a role entirely.
 - **No versioning/audit trail**: editing `profile`/`positioning` overwrites in place; no history of what a given exported PDF actually contained when sent to an employer.
 - **No photo upload UI**: the photo is a fixed asset (`public/photo.jpg`); swapping it means replacing that file directly.
@@ -259,7 +313,7 @@ Vercel project **`avis/cv`** (linked via `vercel link`). Custom domain **chafiqj
 - `pnpm run build` — production build
 - `pnpm run start` — run the production build locally
 - `pnpm run lint` — ESLint
-- `pnpm run test` — runs `lib/assemble.test.ts` (plain `node:assert`, no framework)
+- `pnpm run test` — runs `lib/assemble.test.ts` and `lib/gemini-cost-tracker.test.ts` (plain `node:assert`, no framework)
 - `pnpm run db:seed` — runs `scripts/seed.ts`, upserting `profile` and all `positionings` into MongoDB Atlas
 - `pnpm run test:cv-pipeline` — fetches live Atlas data, runs `assemble()` + schema validation per positioning, reports bullet counts
 - `pnpm run test:google` — Drive/Sheets connectivity check for the (currently app-unused) Google service account

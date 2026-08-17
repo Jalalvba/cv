@@ -1,7 +1,7 @@
 import { errorMessage } from "@/lib/api-errors";
 import type { GeminiUsageMetadata } from "@/lib/gemini-cost-tracker";
-import { DEFAULT_TIER, TIER_ORDER, type ModelTier } from "@/lib/geminiModels";
-import { getActiveGeminiModel } from "@/lib/getDynamicModel";
+import { DEFAULT_TIER, TIER_ORDER, type ModelTier } from "@/lib/gemini-models";
+import { getActiveGeminiModel } from "@/lib/gemini-model-discovery";
 
 /**
  * Minimal server-only Gemini client — the live replacement for the previous
@@ -102,7 +102,7 @@ export interface GenerateJsonResult {
  * through callGeminiWithTracking() in lib/gemini-cost-tracker.ts, so a call
  * can never skip the quota count, usage history and credit accounting.
  */
-export async function generateJson(opts: {
+async function generateJson(opts: {
   systemInstruction: string;
   userPrompt: string;
   responseSchema: ResponseSchema;
@@ -199,7 +199,7 @@ export async function generateJson(opts: {
 
 /**
  * Shape check only — NOT a fixed registry, since model ids now come from
- * live discovery (lib/getDynamicModel.ts) and are expected to change without
+ * live discovery (lib/gemini-model-discovery.ts) and are expected to change without
  * a code change here. Matches both concrete ids ("gemini-2.5-flash-lite")
  * and rolling aliases ("gemini-flash-lite-latest"): lowercase letters,
  * digits, dots and hyphens only, so nothing in this string can break out of

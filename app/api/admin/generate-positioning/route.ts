@@ -3,8 +3,8 @@ import { getDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/admin-auth";
 import { parseJsonBody, zodErrorResponse, errorMessage } from "@/lib/api-errors";
 import { generateJsonWithFallback, getDefaultModel, GeminiError } from "@/lib/gemini";
-import { getActiveGeminiModel } from "@/lib/getDynamicModel";
-import { DEFAULT_TIER } from "@/lib/geminiModels";
+import { getActiveGeminiModel } from "@/lib/gemini-model-discovery";
+import { DEFAULT_TIER } from "@/lib/gemini-models";
 import { callGeminiWithTracking } from "@/lib/gemini-cost-tracker";
 import {
   EXAMPLE_POSITIONING_ID,
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
   let raw: unknown;
   let costInfo;
   try {
-    // Resolved live (see lib/getDynamicModel.ts) purely to name the quota
+    // Resolved live (see lib/gemini-model-discovery.ts) purely to name the quota
     // slot claimed up front; the actual call may still step up a tier via
     // generateJsonWithFallback below, in which case billing keys off
     // whatever modelVersion the response reports, not this value.

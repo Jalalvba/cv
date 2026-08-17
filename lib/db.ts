@@ -1,6 +1,10 @@
 import { MongoClient } from "mongodb";
 
-/** Cached MongoDB client singleton — getDb() is what every route/script actually calls. */
+/**
+ * Cached MongoDB client singleton. getDb() is the only public entry point —
+ * the client promise itself is deliberately module-local so no caller can
+ * open its own `db(...)` on a different database name than the one below.
+ */
 
 const uri = process.env.MONGODB_URI;
 
@@ -30,8 +34,6 @@ if (process.env.NODE_ENV === "development") {
 } else {
   clientPromise = new MongoClient(uri).connect();
 }
-
-export default clientPromise;
 
 export async function getDb() {
   const client = await clientPromise;

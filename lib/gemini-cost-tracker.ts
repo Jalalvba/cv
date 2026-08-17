@@ -56,7 +56,7 @@ export interface ModelPrice {
 /**
  * Keyed by the CONCRETE model id, verified against ai.google.dev/gemini-api/docs/pricing.
  * Add new models here — nothing else needs to change. Keep this in sync with
- * lib/geminiModels.ts's GEMINI_MODELS registry.
+ * lib/gemini-models.ts's GEMINI_MODELS registry.
  *
  * These are the ids the API itself reports back in `modelVersion`, and the
  * form these keys must match.
@@ -268,12 +268,6 @@ export async function getRemainingCredit(): Promise<number> {
   const totals = await conn.collection<UsageTotals>("gemini_usage_totals").find({}).toArray();
   const spent = totals.reduce((sum, t) => sum + (t.total_cost_usd ?? 0), 0);
   return startingCreditUsd() - spent;
-}
-
-/** Per-model running totals, for a usage/history view. */
-export async function getUsageTotals(): Promise<UsageTotals[]> {
-  const conn = await db();
-  return conn.collection<UsageTotals>("gemini_usage_totals").find({}).toArray();
 }
 
 /**

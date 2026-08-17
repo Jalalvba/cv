@@ -16,7 +16,7 @@ Open http://localhost:3000. Click "Admin" in the top nav and log in with `ADMIN_
 ## Project structure
 
 ```
-app/          Next.js App Router — public Home (/), gated admin editor and seed tool (/admin/*), API routes
+app/          Next.js App Router — public Home (/), gated admin editor and job-offer generator (/admin/*), API routes
 components/   CVPreview (web) / CVDocument (PDF) — pixel-matched via lib/tokens.ts — plus nav/auth UI
 lib/          Shared types, MongoDB client, assemble() merge logic, zod schemas, iron-session config
 scripts/      One-off/dev-tooling scripts: seed, pipeline verification, Google connectivity check
