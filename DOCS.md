@@ -101,6 +101,7 @@ CV/
 │   ├── seed.ts                      upserts profile + all positionings into MongoDB Atlas — `pnpm run db:seed`
 │   ├── test-cv-pipeline.ts          fetches live data, runs assemble()+schema validation per positioning
 │   └── test-google-service-account.ts   Drive/Sheets connectivity check for GOOGLE_SERVICE_ACCOUNT_KEY_B64
+├── backup-db.sh                     mongodump snapshot of the `cv` database + restore recipes (§12)
 ├── public/photo.jpg                 profile photo (600×600)
 ├── DOCS.md                          single source of truth (this file)
 ├── AGENTS.md                        agent-instructions pointer → DOCS.md §1
@@ -317,3 +318,37 @@ Vercel project **`avis/cv`** (linked via `vercel link`). Custom domain **chafiqj
 - `pnpm run db:seed` — runs `scripts/seed.ts`, upserting `profile` and all `positionings` into MongoDB Atlas
 - `pnpm run test:cv-pipeline` — fetches live Atlas data, runs `assemble()` + schema validation per positioning, reports bullet counts
 - `pnpm run test:google` — Drive/Sheets connectivity check for the (currently app-unused) Google service account
+
+### Backups (`./backup-db.sh`)
+
+Not a pnpm script — run it directly. Requires the MongoDB Database Tools
+(`mongodump`/`mongorestore`/`mongosh`), which are not npm packages.
+
+```bash
+./backup-db.sh          # writes ~/backups/cv-db-YYYYMMDD-HHMMSS.archive.gz
+```
+
+Reads `MONGODB_URI` from `.env.local` (parsed, never sourced), dumps the whole
+`cv` database gzipped, verifies the archive is non-empty and passes `gzip -t`
+before trusting it, and prunes to the newest 14 snapshots. A `mongodump` that
+exits 0 but writes a truncated file is the classic silent backup failure, hence
+the explicit checks. `DB_NAME` is hardcoded to `cv` because this project has no
+`MONGODB_DB` env var — the name lives in `lib/db.ts`; change both together.
+
+**Why this matters:** nothing in `profile` or `positionings` is reproducible
+from this repo. `scripts/seed.ts` deliberately omits the real street address,
+and every positioning generated since the last seed exists only in Atlas.
+`email_opens` cannot be regenerated at all.
+
+**Restore** — the full recipe lives in the script's own header comment. The safe
+form restores into a scratch database and copies out only what you need, leaving
+the live `cv` database untouched:
+
+```bash
+mongorestore --uri="$MONGODB_URI" --gzip \
+  --archive=~/backups/cv-db-YYYYMMDD-HHMMSS.archive.gz \
+  --nsFrom='cv.*' --nsTo='cv_restore.*'
+```
+
+Prefer that over `--drop` against `cv`, which is destructive. Inspect an archive
+without restoring anything using `--dryRun -v`.
