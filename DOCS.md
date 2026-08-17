@@ -352,3 +352,27 @@ mongorestore --uri="$MONGODB_URI" --gzip \
 
 Prefer that over `--drop` against `cv`, which is destructive. Inspect an archive
 without restoring anything using `--dryRun -v`.
+
+**Scheduling and failure reporting** live outside this repo, as systemd *user*
+units in `~/.config/systemd/user/` (not cron):
+
+- `cv-backup.timer` — daily at 03:10 with up to 5min jitter, `Persistent=true`
+  so a run missed while the machine was off fires after boot. Staggered against
+  the sibling `hope-backup` / `avis-backup` timers so three dumps don't hit
+  Atlas at once. `loginctl enable-linger` is on, so it runs without an active
+  login session.
+- `cv-backup.service` — runs the script; its output appends to
+  `~/backups/cv-db-backup.log`.
+- `backup-failed@.service` → `~/.local/bin/notify-backup-failure` — wired in via
+  a `cv-backup.service.d/onfailure.conf` drop-in. On a failed run it appends a
+  timestamped record (unit, exit status, last 15 journal lines) to
+  **`~/backups/BACKUP-FAILURES.log`**, tags the journal as `backup-failure`, and
+  best-effort raises a desktop notification. An empty failures file means no run
+  has ever failed; that file is the one to check, since a silently failing
+  backup is worse than none.
+
+```bash
+systemctl --user list-timers cv-backup.timer   # when it next runs
+cat ~/backups/BACKUP-FAILURES.log              # empty == healthy
+journalctl --user -t backup-failure            # every failure ever reported
+```
